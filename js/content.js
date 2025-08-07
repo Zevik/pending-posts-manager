@@ -435,10 +435,8 @@ async function readPendingPosts(data) {
                 pageText.includes('nothing to review') ||
                 pageText.includes('all caught up')) {
                 showInfo("No pending posts found in this group - that's normal! Moving to next group.");
-            } else if (pageText.includes('permission') || pageText.includes('access')) {
-                showInfo("Access denied - you may not be an admin/moderator of this group.");
             } else {
-                showInfo("Pending posts page loaded but no posts found. Check if there are actually pending posts or if page structure changed.");
+                showInfo("Pending posts page loaded but no posts found. Moving to next group.");
             }
         } else {
             showInfo("Error: Not on pending posts page. Please check URL format.");
