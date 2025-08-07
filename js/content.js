@@ -155,7 +155,14 @@ async function readPendingPosts(data) {
     if (!window.processedPosts) {
         window.processedPosts = new Set();
     }
+    
+    // Initialize scroll counter to prevent infinite scrolling
+    if (!window.scrollCount) {
+        window.scrollCount = 0;
+    }
+    
     console.log('Already processed posts:', window.processedPosts.size);
+    console.log('Scroll attempts:', window.scrollCount);
     
     // Wait a bit for page to fully load
     await sleep(2000);
@@ -427,8 +434,26 @@ async function readPendingPosts(data) {
 
     console.log(`=== FINISHED PROCESSING ${posts.length} PENDING POSTS ===`);
 
+    // Limit the number of scroll attempts to prevent infinite loops
+    if (window.scrollCount >= 5) {
+        console.log('Maximum scroll attempts reached, stopping scan');
+        console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
+        showInfo(`Scan completed - reached max scrolls. Processed ${window.processedPosts ? window.processedPosts.size : 0} posts`);
+        
+        // Reset scroll counter for next group
+        window.scrollCount = 0;
+        
+        console.log('Finished processing all pending posts in this group');
+        chrome.runtime.sendMessage({
+            action: "bg-continue-next-group",
+            config: data.config
+        });
+        return;
+    }
+
     // Try scrolling down to load more content
     console.log('Scrolling down to load more content...');
+    window.scrollCount++;
     const scrollHeight = document.body.scrollHeight;
     window.scrollTo(0, scrollHeight);
     
@@ -516,11 +541,40 @@ function truncate(input) {
 };
 
 function generatePostId(postElement) {
-    // Try to find a unique identifier for the post
+    // Try to find a unique identifier for the post using multiple approaches
+    
+    // Method 1: Look for unique data attributes or IDs
+    const dataId = postElement.getAttribute('data-id') || 
+                   postElement.getAttribute('id') || 
+                   postElement.querySelector('[data-id]')?.getAttribute('data-id');
+    if (dataId) {
+        return dataId;
+    }
+    
+    // Method 2: Use position in DOM
+    const siblings = Array.from(postElement.parentElement?.children || []);
+    const position = siblings.indexOf(postElement);
+    
+    // Method 3: Extract meaningful text content (skip repeated "Facebook" words)
     const textContent = postElement.innerText || postElement.textContent || '';
-    const firstWords = textContent.split(' ').slice(0, 10).join(' ');
-    const hash = firstWords.replace(/[^\w\s]/gi, '').replace(/\s+/g, '_').substring(0, 50);
-    return hash || `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const lines = textContent.split('\n').filter(line => 
+        line.trim() && 
+        line.trim() !== 'Facebook' && 
+        !line.includes('Facebook Facebook Facebook')
+    );
+    
+    // Get first meaningful line
+    const meaningfulText = lines.slice(0, 3).join(' ').trim();
+    
+    if (meaningfulText && meaningfulText.length > 5) {
+        // Create hash from meaningful text + position
+        const cleanText = meaningfulText.replace(/[^\w\s\u0590-\u05FF]/gi, '').replace(/\s+/g, '_');
+        const uniqueId = `${cleanText.substring(0, 30)}_pos${position}_${Date.now()}`;
+        return uniqueId;
+    }
+    
+    // Fallback: timestamp + position + random
+    return `post_${position}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 async function scrapPendingPostData(data, post, keywords) {
@@ -530,11 +584,18 @@ async function scrapPendingPostData(data, post, keywords) {
     
     // Generate a unique identifier for this post
     const postId = generatePostId(post);
+    console.log('Generated post ID:', postId);
     
     // Check if we already processed this post
     if (window.processedPosts && window.processedPosts.has(postId)) {
         console.log('Post already processed, skipping:', postId);
         return null;
+    }
+    
+    // Mark this post as being processed (add it immediately to avoid re-processing)
+    if (window.processedPosts) {
+        window.processedPosts.add(postId);
+        console.log('Marked post as processed:', postId);
     }
     
     // Try to find post URL from pending posts structure
@@ -579,12 +640,6 @@ async function scrapPendingPostData(data, post, keywords) {
     
     console.log('Final post data to save:', postData);
     log('pending post', postData);
-
-    // Mark this post as processed
-    if (window.processedPosts) {
-        window.processedPosts.add(postId);
-        console.log('Added post to processed list:', postId);
-    }
 
     numberOfRowOnGGSheets = numberOfRowOnGGSheets + 1;
     data.config.rowIndex = numberOfRowOnGGSheets;
