@@ -221,19 +221,46 @@ async function readPendingPosts(data) {
     }
     
     if (posts.length === 0) {
-        // Very broad selector - any div that might be a post
-        const allDivs = document.querySelectorAll('div');
-        const potentialPosts = [];
-        for (let div of allDivs) {
-            // Look for divs that contain both text content and approve/decline buttons
-            const divText = div.innerText;
-            if (divText && divText.length > 50 && 
-                (divText.includes('Approve') || divText.includes('Decline') || 
-                 divText.includes('אישור') || divText.includes('דחיה'))) {
-                potentialPosts.push(div);
+        // Look for pending posts in a more targeted way
+        const pendingContainer = document.querySelector('[data-pagelet*="PendingPosts"]') || 
+                                document.querySelector('[aria-label*="Pending" i]') ||
+                                document.querySelector('[role="main"]');
+        
+        if (pendingContainer) {
+            // Look for containers that have both text content and action buttons
+            const potentialPosts = [];
+            const divs = pendingContainer.querySelectorAll('div');
+            
+            for (let div of divs) {
+                const divText = div.innerText;
+                // Check if this div contains a meaningful post
+                if (divText && divText.length > 100 && divText.length < 5000) {
+                    // Must contain approve/decline buttons to be a pending post
+                    const hasApproveButton = div.querySelector('[aria-label*="Approve" i]') || 
+                                            div.querySelector('[aria-label*="אישור" i]') ||
+                                            divText.includes('Approve') || divText.includes('אישור');
+                    const hasDeclineButton = div.querySelector('[aria-label*="Decline" i]') || 
+                                            div.querySelector('[aria-label*="דחיה" i]') ||
+                                            divText.includes('Decline') || divText.includes('דחיה');
+                    
+                    if (hasApproveButton && hasDeclineButton) {
+                        // Make sure it's not a child of another post we already found
+                        let isChildOfExisting = false;
+                        for (let existingPost of potentialPosts) {
+                            if (existingPost.contains(div)) {
+                                isChildOfExisting = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!isChildOfExisting) {
+                            potentialPosts.push(div);
+                        }
+                    }
+                }
             }
+            posts = potentialPosts;
         }
-        posts = potentialPosts;
         console.log('Found potential posts with manual detection:', posts.length);
     }
     
@@ -448,34 +475,66 @@ function findPendingPostContent(post) {
         return contentElement.innerText;
     }
     
+    // Look for the main text content - usually in a div with dir="auto"
     contentElement = post.querySelector('[dir="auto"]');
-    if (contentElement && contentElement.innerText.trim()) {
+    if (contentElement && contentElement.innerText.trim() && 
+        !contentElement.innerText.includes('Approve') && 
+        !contentElement.innerText.includes('Decline')) {
         return contentElement.innerText;
     }
     
-    // Look for text in any div inside the post
+    // Look for text in divs, but exclude UI elements
     const textDivs = post.querySelectorAll('div');
+    let bestContent = '';
     for (let div of textDivs) {
-        if (div.children.length === 0 && div.innerText.trim().length > 10) {
-            return div.innerText;
+        const text = div.innerText.trim();
+        // Skip if it's UI text or too short
+        if (text.length > 20 && text.length < 2000 && 
+            !text.includes('Approve') && !text.includes('Decline') &&
+            !text.includes('אישור') && !text.includes('דחיה') &&
+            !text.includes('See More') && !text.includes('Hide') &&
+            !text.includes('·') && !text.includes('hrs') && !text.includes('min') &&
+            div.children.length <= 2) { // Not a complex container
+            
+            if (text.length > bestContent.length) {
+                bestContent = text;
+            }
         }
     }
     
-    // Look for spans with meaningful text
+    if (bestContent.length > 20) {
+        return bestContent;
+    }
+    
+    // Look for spans with meaningful text (but not UI elements)
     const spans = post.querySelectorAll('span');
     let longestText = '';
     for (let span of spans) {
-        if (span.children.length === 0 && span.innerText.trim().length > longestText.length) {
-            longestText = span.innerText.trim();
+        const text = span.innerText.trim();
+        if (text.length > 20 && text.length > longestText.length &&
+            !text.includes('Approve') && !text.includes('Decline') &&
+            !text.includes('אישור') && !text.includes('דחיה') &&
+            span.children.length === 0) {
+            longestText = text;
         }
     }
     
-    if (longestText.length > 10) {
+    if (longestText.length > 20) {
         return longestText;
     }
     
-    // Get all text content as fallback
-    return post.innerText || '';
+    // Get all text content as fallback, but try to clean it
+    const fullText = post.innerText || '';
+    const lines = fullText.split('\n');
+    const filteredLines = lines.filter(line => {
+        const trimmed = line.trim();
+        return trimmed.length > 10 && 
+               !trimmed.includes('Approve') && !trimmed.includes('Decline') &&
+               !trimmed.includes('אישור') && !trimmed.includes('דחיה') &&
+               !trimmed.includes('·') && !trimmed.includes('hrs') && !trimmed.includes('min');
+    });
+    
+    return filteredLines.join('\n').trim();
 }
 
 function findPendingPostWriter(post) {
