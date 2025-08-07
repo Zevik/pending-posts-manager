@@ -21,7 +21,6 @@
       "matches": [
         "https://www.facebook.com/groups/*/pending*",
         "https://mbasic.facebook.com/groups/*/pending*",
-        "https://www.facebook.com/groups/*",
         "https://m.facebook.com/groups/*/pending*"
       ],
       "js": [

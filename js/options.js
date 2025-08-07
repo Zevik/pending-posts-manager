@@ -109,6 +109,9 @@ async function loadData() {
             $('#dailybreak-from').val(configData["dailybreak-from"]);
             $('#dailybreak-to').val(configData["dailybreak-to"]);
             $('#scrolling-back-pages').val(configData["scrolling-back-pages"]);
+            
+            // Load auto-approve setting
+            $('#auto-approve-enabled').prop('checked', configData["auto-approve-enabled"] || false);
 
             toggleStartStop(configData["isRunning"]);
         }
@@ -136,6 +139,7 @@ function saveData(isRunning) {
     configData['sheetId'] = getSheetIdFromSheetUrl($('#sheet-url').val());
     configData['google-form-id'] = $('#google-form-id').val();
     configData["rerun-interval"] = $('#rerun-interval').val();
+    configData['auto-approve-enabled'] = $('#auto-approve-enabled').prop('checked');
 
     configData['dailybreak-from'] = $('#dailybreak-from').val();
     configData['dailybreak-to'] = $('#dailybreak-to').val();

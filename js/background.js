@@ -61,6 +61,17 @@ chrome.runtime.onMessage.addListener(async function(data, sender, sendResponse) 
             sendToGoogleForm(data, data.postData);
             return;
         }
+        if (data.action == 'readOpenAIDecision') {
+            console.log('📖 Reading OpenAI decision from sheets for post:', data.postUrl);
+            try {
+                const decision = await readOpenAIDecisionFromSheets(data.config, data.postUrl);
+                sendResponse({success: true, decision: decision});
+            } catch (error) {
+                console.log('❌ Error reading OpenAI decision:', error);
+                sendResponse({success: false, error: error.message});
+            }
+            return true; // Keep message channel open for async response
+        }
         if (data.action == 'bg-start-scraping-group') {
             initializeRerunData();
             rerunIntervalTime = data.config['rerun-interval'];
@@ -513,6 +524,47 @@ async function sendToSheets(sheetId, postData) {
 
 async function loadExistingData(sheetId, range) {
     return await getCurrentDataList(sheetId, range);
+}
+
+// Read OpenAI decision from Google Sheets column H
+async function readOpenAIDecisionFromSheets(config, postUrl) {
+    console.log('🔍 Looking for OpenAI decision in sheets for post URL:', postUrl);
+    
+    try {
+        // Load all data from the sheet
+        const allData = await getCurrentDataList(config.sheetId, 'A:H');
+        
+        console.log('📊 Loaded', allData.length, 'rows from sheet');
+        
+        // Find the row with matching post URL (column E - index 4)
+        for (let i = 0; i < allData.length; i++) {
+            const row = allData[i];
+            if (row.length > 4 && row[4] === postUrl) {
+                // Found the matching row, check column H (index 7)
+                const decision = row.length > 7 ? row[7] : null;
+                console.log('✅ Found matching row', i + 1, 'for URL:', postUrl);
+                console.log('🤖 OpenAI decision in column H:', decision);
+                
+                if (decision && decision.trim()) {
+                    const cleanDecision = decision.trim().toUpperCase();
+                    if (cleanDecision === 'YES' || cleanDecision === 'NO' || cleanDecision === 'SKIP') {
+                        return cleanDecision;
+                    }
+                }
+                
+                // Row found but no valid decision yet
+                console.log('⏳ Row found but no valid OpenAI decision yet');
+                return null;
+            }
+        }
+        
+        console.log('❌ No matching row found for URL:', postUrl);
+        return null;
+        
+    } catch (error) {
+        console.log('❌ Error reading from Google Sheets:', error);
+        throw error;
+    }
 }
 
 function isBlank(str) {

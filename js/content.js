@@ -14,12 +14,8 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('=== DOM LOADED - CONTENT SCRIPT READY ===');
 });
 
-// Show a visual indicator that the extension is active
-if (window.location.href.includes('/pending')) {
-    setTimeout(() => {
-        showInfo('Pending Posts Scanner is active on this page');
-    }, 2000);
-}
+// Only show indicator when actively running (not on every pending page)
+// The indicator will be shown when the extension is actually activated
 
 toastr.options = {
     "closeButton": false,
@@ -151,6 +147,13 @@ async function readPendingPosts(data) {
     console.log('Keywords:', keywords);
     console.log('Current URL:', window.location.href);
     
+    // Show that the extension is actively working on this specific group
+    showInfo(`Pending Posts Scanner is actively scanning group: ${groupName}`);
+    
+    // Reset post counter for this new run
+    window.currentRunPostCount = 0;
+    console.log('🔄 Reset post counter for new run');
+    
     // Initialize processed posts tracking if not exists
     if (!window.processedPosts) {
         window.processedPosts = new Set();
@@ -163,6 +166,7 @@ async function readPendingPosts(data) {
     
     console.log('Already processed posts:', window.processedPosts.size);
     console.log('Scroll attempts:', window.scrollCount);
+    console.log('Current run post count:', window.currentRunPostCount);
     
     // Wait a bit for page to fully load
     await sleep(2000);
@@ -241,7 +245,8 @@ async function readPendingPosts(data) {
         const mainContentAreas = [
             document.querySelector('[role="main"]'),
             document.querySelector('[data-pagelet="GroupPendingPostsFeed"]'),
-            document.querySelector('[aria-label*="feed" i]')
+            document.querySelector('[aria-label*="feed" i]'),
+            document.body // fallback to search entire page
         ].filter(Boolean);
         
         console.log('Found main content areas:', mainContentAreas.length);
@@ -250,7 +255,7 @@ async function readPendingPosts(data) {
         
         for (let contentArea of mainContentAreas) {
             // Look specifically for the blue "Approve" buttons that are actual post actions
-            const approveButtons = contentArea.querySelectorAll('div[role="button"], button');
+            const approveButtons = contentArea.querySelectorAll('div[role="button"], button, [aria-label*="Approve"], [aria-label*="אישור"]');
             
             console.log('Found buttons in content area:', approveButtons.length);
             
@@ -275,7 +280,7 @@ async function readPendingPosts(data) {
                 let attempts = 0;
                 
                 // Go up the DOM tree to find the post container
-                while (parent && attempts < 8) {
+                while (parent && attempts < 12) { // Increased from 8 to 12
                     // Skip if we've gone too far up
                     if (parent.tagName.toLowerCase() === 'html' || 
                         parent.tagName.toLowerCase() === 'body') {
@@ -284,14 +289,14 @@ async function readPendingPosts(data) {
                     
                     const parentText = parent.innerText;
                     
-                    // Check if this looks like a post container
+                    // Check if this looks like a post container - be more specific
                     if (parentText && 
-                        parentText.length > 50 && 
-                        parentText.length < 2000 &&
-                        parentText.includes('Approve') && 
-                        parentText.includes('Decline')) {
+                        parentText.length > 50 && // Must have meaningful content
+                        parentText.length < 3000 &&
+                        (parentText.includes('Approve') || parentText.includes('אישור')) && 
+                        (parentText.includes('Decline') || parentText.includes('דחייה'))) {
                         
-                        // Make sure it's not navigation/admin content
+                        // Make sure it's not navigation/admin content or page header
                         const lowerText = parentText.toLowerCase();
                         if (lowerText.includes('admin tools') || 
                             lowerText.includes('community home') ||
@@ -299,31 +304,57 @@ async function readPendingPosts(data) {
                             lowerText.includes('group settings') ||
                             lowerText.includes('badge requests') ||
                             lowerText.includes('potential spam') ||
-                            lowerText.includes('scheduled posts')) {
-                            break; // This is admin navigation, not a post
+                            lowerText.includes('scheduled posts') ||
+                            lowerText.includes('pending posts ·') || // Skip page header
+                            lowerText.startsWith('pending posts')) { // Skip page title
+                            break; // This is admin navigation or page header, not a post
                         }
                         
-                        // Look for actual post content indicators
-                        const hasRealContent = parentText.split('\n').some(line => {
+                        // Look for actual post content indicators - must have real content
+                        const lines = parentText.split('\n').filter(line => line.trim().length > 0);
+                        
+                        // Check for author name pattern (common in Facebook posts)
+                        const hasAuthor = lines.some(line => {
                             const trimmed = line.trim();
-                            return trimmed.length > 15 && 
+                            // Look for lines that could be author names
+                            return trimmed.length > 3 && 
+                                   trimmed.length < 50 &&
                                    !trimmed.includes('Approve') && 
                                    !trimmed.includes('Decline') &&
                                    !trimmed.includes('Send') &&
                                    !trimmed.includes('Admin') &&
                                    !trimmed.includes('Community') &&
-                                   !trimmed.includes('Manage') &&
-                                   !trimmed.match(/^\d+[mhd]$/i);
+                                   !trimmed.includes('Pending posts') &&
+                                   !trimmed.match(/^\d+\s*[·•]\s*\d*$/) && // Skip "7 · " patterns
+                                   !trimmed.match(/^\d+[mhd]$/i); // Skip time patterns
                         });
                         
-                        if (hasRealContent) {
+                        // Check for meaningful post content (not just UI elements)
+                        const hasRealContent = lines.some(line => {
+                            const trimmed = line.trim();
+                            return trimmed.length > 8 && // Meaningful content length
+                                   !trimmed.includes('Approve') && 
+                                   !trimmed.includes('Decline') &&
+                                   !trimmed.includes('אישור') &&
+                                   !trimmed.includes('דחייה') &&
+                                   !trimmed.includes('Send') &&
+                                   !trimmed.includes('Admin') &&
+                                   !trimmed.includes('Community') &&
+                                   !trimmed.includes('Pending posts') &&
+                                   !trimmed.includes('Manage') &&
+                                   !trimmed.match(/^\d+\s*[·•]\s*\d*$/) && // Skip "7 · " patterns
+                                   !trimmed.match(/^\d+[mhd]$/i) && // Skip time patterns
+                                   !trimmed.match(/^[·•]\s*\d+$/); // Skip "· 7" patterns
+                        });
+                        
+                        if ((hasAuthor || hasRealContent) && lines.length > 4) { // Must have author OR content AND enough lines
                             // Make sure we don't add duplicates
                             const isDuplicate = potentialPosts.some(existingPost => 
                                 existingPost.contains(parent) || parent.contains(existingPost)
                             );
                             
                             if (!isDuplicate) {
-                                console.log('Found potential real pending post');
+                                console.log('Found potential real pending post #' + (potentialPosts.length + 1));
                                 console.log('Post content preview:', parentText.substring(0, 200));
                                 potentialPosts.push(parent);
                                 break;
@@ -646,6 +677,23 @@ async function scrapPendingPostData(data, post, keywords) {
     data.config.existingPostURL.push(postURL);
     console.log('Sending to sheets with config:', data.config);
     chrome.runtime.sendMessage({action: "sendToSheets", config: data.config, postData: postData});
+    
+    // Auto approve/decline feature for test group
+    const currentGroupName = data.config.groupsConfig['group-name-' + groupIndex];
+    console.log('🔍 Checking auto-approve condition for group:', currentGroupName);
+    
+    // Increment local post counter for this run
+    window.currentRunPostCount = (window.currentRunPostCount || 0) + 1;
+    
+    // Check if auto-approve is enabled and this is the test group
+    if (data.config['auto-approve-enabled'] && (currentGroupName === 'test-group' || currentGroupName === 'טסט')) {
+        console.log('🤖 AUTO-APPROVE ENABLED for group:', currentGroupName);
+        console.log('📊 Using OpenAI-based decision making');
+        await handleOpenAIAutoApprove(post, postData, data.config);
+    } else {
+        console.log('⏭️ Auto-approve disabled or not test group. Enabled:', data.config['auto-approve-enabled'], 'Group:', currentGroupName);
+    }
+    
     return true;
 }
 
@@ -730,132 +778,228 @@ function findPendingPostURL(post) {
 function findPendingPostContent(post) {
     console.log('Extracting content from post...');
     
+    // Debug: Log all text content to understand the structure
+    console.log('=== DEBUG: ALL TEXT CONTENT ===');
+    const allText = post.innerText || post.textContent || '';
+    console.log('Full post text:', allText.substring(0, 200));
+    
+    // Log all text lines for debugging
+    const allLines = allText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    console.log('All text lines:', allLines);
+    
+    // Check if this is ONLY a UI navigation element with no real content
+    const isPageHeader = allText.includes('Pending posts') && 
+                        allText.includes('Approve') && 
+                        allText.includes('Decline') && 
+                        allText.length < 100 && 
+                        !allLines.some(line => line.length > 15 && 
+                                              !line.includes('Pending posts') && 
+                                              !line.includes('Approve') && 
+                                              !line.includes('Decline') &&
+                                              !line.match(/^\d+\s*[·•]\s*\d*$/) &&
+                                              !line.match(/^[·•]\s*\d+$/));
+    
+    if (isPageHeader) {
+        console.log('This appears to be a page header UI element with no content');
+        return 'No post content found';
+    }
+    
     // Try different selectors for pending post content
     let contentElement = post.querySelector('[data-testid="post_message"]');
     if (contentElement && contentElement.innerText.trim()) {
         console.log('Found content via post_message selector');
-        return contentElement.innerText;
+        return contentElement.innerText.trim();
     }
     
     contentElement = post.querySelector('.userContent');
     if (contentElement && contentElement.innerText.trim()) {
         console.log('Found content via userContent selector');
-        return contentElement.innerText;
+        return contentElement.innerText.trim();
     }
     
-    // Look for text in divs, but exclude UI elements - improved logic
-    const textDivs = post.querySelectorAll('div');
-    let candidates = [];
+    // Look for actual post content by analyzing structure
+    console.log('=== ANALYZING POST STRUCTURE FOR CONTENT ===');
     
-    for (let div of textDivs) {
-        const text = div.innerText.trim();
+    // Filter out UI lines and find content
+    const filteredLines = allLines.filter(line => {
+        const trimmed = line.trim();
         
-        // Skip if it's UI text or too short/long
-        if (text.length < 15 || text.length > 800) continue;
-        if (text.includes('Approve') || text.includes('Decline')) continue;
-        if (text.includes('אישור') || text.includes('דחיה')) continue;
-        if (text.includes('Send') || text.includes('Hide')) continue;
-        if (text.includes('See More') || text.includes('Show less')) continue;
-        if (text.match(/^\d+[mhd]$/)) continue; // Skip timestamps like "1m", "2h"
-        if (text.match(/^\d+ .*ago$/)) continue; // Skip "5 minutes ago" etc
+        // Skip UI elements
+        if (trimmed === 'Approve' || trimmed === 'Decline' || 
+            trimmed === 'אישור' || trimmed === 'דחיה' ||
+            trimmed === 'Send' || trimmed === 'Facebook' ||
+            trimmed.includes('Pending posts') ||
+            trimmed.match(/^\d+\s*[·•]\s*\d*$/) || // Skip "7 · " patterns
+            trimmed.match(/^\d+[mhd]$/i) || // Skip time patterns like "1m"
+            trimmed.match(/^[·•]\s*\d+$/)) { // Skip "· 7" patterns
+            return false;
+        }
         
-        // Skip Facebook admin/navigation content
-        if (text.toLowerCase().includes('communities')) continue;
-        if (text.toLowerCase().includes('facebook')) continue;
-        if (text.toLowerCase().includes('admin tools')) continue;
-        if (text.toLowerCase().includes('community home')) continue;
-        if (text.toLowerCase().includes('overview')) continue;
-        if (text.toLowerCase().includes('admin assist')) continue;
-        if (text.toLowerCase().includes('badge requests')) continue;
-        if (text.toLowerCase().includes('pending posts')) continue;
-        if (text.toLowerCase().includes('potential spam')) continue;
-        if (text.toLowerCase().includes('scheduled posts')) continue;
-        if (text.toLowerCase().includes('activity log')) continue;
-        if (text.toLowerCase().includes('group rules')) continue;
-        if (text.toLowerCase().includes('member-reported')) continue;
-        if (text.toLowerCase().includes('moderation alerts')) continue;
-        if (text.toLowerCase().includes('group status')) continue;
-        if (text.toLowerCase().includes('community roles')) continue;
-        if (text.toLowerCase().includes('group settings')) continue;
-        if (text.toLowerCase().includes('manage discussions')) continue;
-        if (text.toLowerCase().includes('add features')) continue;
-        if (text.toLowerCase().includes('insights')) continue;
-        if (text.toLowerCase().includes('engagement')) continue;
-        if (text.toLowerCase().includes('admins & moderators')) continue;
-        if (text.toLowerCase().includes('group experts')) continue;
-        if (text.toLowerCase().includes('participants')) continue;
-        if (text.toLowerCase().includes('help center')) continue;
-        if (text.toLowerCase().includes('groups hub')) continue;
-        if (text.includes('·')) continue; // Skip UI elements with dots
+        // Keep meaningful lines
+        return trimmed.length > 2;
+    });
+    
+    console.log('Filtered content lines:', filteredLines);
+    
+    // Look for the main post content (usually comes after author info)
+    let authorLine = '';
+    let contentLine = '';
+    
+    for (let i = 0; i < filteredLines.length; i++) {
+        const line = filteredLines[i];
         
-        // Check if this div is likely the main content (not nested deep with many children)
-        if (div.children.length <= 3) {
-            candidates.push({
-                element: div,
-                text: text,
-                length: text.length
-            });
+        // Skip very short lines
+        if (line.length <= 3) continue;
+        
+        // First substantial line might be author name
+        if (!authorLine && line.length > 3 && line.length < 100) {
+            authorLine = line;
+            console.log('Potential author line:', authorLine);
+            continue;
+        }
+        
+        // Next substantial line is likely the content
+        if (authorLine && !contentLine && line.length > 3) {
+            contentLine = line;
+            console.log('Potential content line:', contentLine);
+            break;
         }
     }
     
-    // Sort by length and pick the longest meaningful text
-    candidates.sort((a, b) => b.length - a.length);
-    
-    if (candidates.length > 0) {
-        console.log('Found content via div analysis, candidates:', candidates.length);
-        console.log('Selected content length:', candidates[0].length);
-        console.log('Selected content preview:', candidates[0].text.substring(0, 100));
-        return candidates[0].text;
+    // Return the content if found
+    if (contentLine && contentLine.length > 3) {
+        console.log('=== FOUND POST CONTENT ===');
+        console.log('Content:', contentLine);
+        return contentLine;
     }
     
-    console.log('No suitable content found - this might be admin UI, not a real post');
+    // Fallback: look for any meaningful text that's not UI
+    for (let line of filteredLines) {
+        if (line.length > 5 && 
+            !line.includes('·') && 
+            !line.match(/^\d+[mhd]$/i)) {
+            console.log('=== FALLBACK CONTENT ===');
+            console.log('Content:', line);
+            return line;
+        }
+    }
+    
+    console.log('No post content found after structure analysis');
     return 'No post content found';
 }
 
 function findPendingPostWriter(post) {
+    console.log('🔍 Looking for post writer...');
+    console.log('Post element for writer search:', post.outerHTML.substring(0, 300));
+    
+    // Get all text lines for analysis
+    const allText = post.innerText || post.textContent || '';
+    const allLines = allText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    console.log('All lines for writer search:', allLines);
+    
     // Try different selectors for pending post author
     let authorElement = post.querySelector('[data-testid="post_author_name"]');
     if (authorElement && authorElement.innerText.trim()) {
-        return authorElement.innerText;
+        console.log('✅ Found writer via post_author_name:', authorElement.innerText.trim());
+        return authorElement.innerText.trim();
     }
     
+    // Look for profile links - common pattern in Facebook
+    authorElement = post.querySelector('a[href*="/profile.php"], a[href*="facebook.com/"][href*="/"]');
+    if (authorElement && authorElement.innerText.trim()) {
+        const name = authorElement.innerText.trim();
+        if (name.length > 2 && name.length < 50 && !name.includes('http')) {
+            console.log('✅ Found writer via profile link:', name);
+            return name;
+        }
+    }
+    
+    // Look for strong elements with names
     authorElement = post.querySelector('strong a');
     if (authorElement && authorElement.innerText.trim()) {
-        return authorElement.innerText;
+        const name = authorElement.innerText.trim();
+        console.log('✅ Found writer via strong a:', name);
+        return name;
     }
     
-    authorElement = post.querySelector('h3 a');
+    // Look for h3, h4 headings with links  
+    authorElement = post.querySelector('h3 a, h4 a');
     if (authorElement && authorElement.innerText.trim()) {
-        return authorElement.innerText;
+        const name = authorElement.innerText.trim();
+        console.log('✅ Found writer via heading link:', name);
+        return name;
     }
     
-    authorElement = post.querySelector('h4 a');
-    if (authorElement && authorElement.innerText.trim()) {
-        return authorElement.innerText;
+    // For pending posts, look for user names in specific structure
+    // Try finding the name near user avatar/image
+    const userLinks = post.querySelectorAll('a[role="link"]');
+    for (let link of userLinks) {
+        const text = link.innerText?.trim();
+        if (text && text.length > 2 && text.length < 50 && 
+            !text.includes('http') && 
+            !text.includes('Approve') && 
+            !text.includes('Decline') &&
+            !text.includes('Send') &&
+            !text.includes('Admin') &&
+            /^[\u0590-\u05FF\u0020a-zA-Z\s]+$/.test(text)) { // Hebrew/English names only
+            console.log('✅ Found writer via user link:', text);
+            return text;
+        }
     }
     
-    // Look for any link that looks like a name
-    const links = post.querySelectorAll('a');
-    for (let link of links) {
-        const text = link.innerText.trim();
-        if (text && !text.includes('http') && !text.includes('www') && text.length > 2 && text.length < 50) {
-            // Skip common button texts
-            if (!text.toLowerCase().includes('approve') && !text.toLowerCase().includes('decline') && 
-                !text.toLowerCase().includes('see more') && !text.toLowerCase().includes('view')) {
+    // Analyze text structure to find author name
+    // In Facebook pending posts, author name usually appears early in the text
+    const potentialAuthors = allLines.filter(line => {
+        // Skip UI elements
+        if (line.includes('Pending posts') || 
+            line.includes('Approve') || 
+            line.includes('Decline') ||
+            line.includes('Send') ||
+            line.includes('Admin') ||
+            line.includes('·') ||
+            line.match(/^\d+[mhd]$/i)) {
+            return false;
+        }
+        
+        // Look for lines that could be author names
+        return line.length > 3 && 
+               line.length < 100 && 
+               (/[\u0590-\u05FF]/.test(line) || /^[a-zA-Z\s]+$/.test(line)); // Hebrew or English text
+    });
+    
+    console.log('Potential author candidates:', potentialAuthors);
+    
+    // The first candidate is most likely the author
+    if (potentialAuthors.length > 0) {
+        const authorName = potentialAuthors[0];
+        console.log('✅ Found writer via text analysis:', authorName);
+        return authorName;
+    }
+    
+    // Try looking for text elements that could be usernames
+    const allTextElements = post.querySelectorAll('span, div');
+    for (let element of allTextElements) {
+        const text = element.innerText?.trim();
+        if (text && text.length > 2 && text.length < 50 && 
+            !text.includes('Approve') && 
+            !text.includes('Decline') &&
+            !text.includes('Send') &&
+            !text.includes('Pending posts') &&
+            !text.includes('Admin') &&
+            !text.includes('·') &&
+            !text.match(/^\d+[mhd]$/i) &&
+            (/[\u0590-\u05FF]/.test(text) || /^[a-zA-Z\s]+$/.test(text))) {
+            
+            // Make sure this element doesn't contain multiple lines (probably not a name)
+            const elementLines = text.split('\n');
+            if (elementLines.length === 1) {
+                console.log('✅ Found writer via text element analysis:', text);
                 return text;
             }
         }
     }
     
-    // Look for strong elements that might contain names
-    const strongElements = post.querySelectorAll('strong');
-    for (let strong of strongElements) {
-        const text = strong.innerText.trim();
-        if (text && text.length > 2 && text.length < 50 && !text.includes('·')) {
-            return text;
-        }
-    }
-    
+    console.log('❌ No writer found, using default');
     return 'Unknown';
 }
 
@@ -1003,4 +1147,260 @@ function isBlockPage() {
     // Don't consider pending posts page as blocked just because no posts found
     // The readPendingPosts function will handle that case properly
     return false;
+}
+
+// Auto approve/decline functionality
+async function handleAutoApproveDecline(postElement, postNumber) {
+    console.log('🤖 Starting auto approve/decline for post #' + postNumber);
+    
+    // Alternating logic: odd posts = approve, even posts = decline
+    const shouldApprove = (postNumber % 2 === 1);
+    const action = shouldApprove ? 'APPROVE' : 'DECLINE';
+    
+    console.log(`🎯 Post #${postNumber} - Decision: ${action}`);
+    showInfo(`Auto ${action}: Post #${postNumber}`);
+    
+    // Find the approve/decline buttons for this specific post
+    const buttons = findApproveDeclineButtons(postElement);
+    
+    if (!buttons.approve || !buttons.decline) {
+        console.log('❌ Could not find approve/decline buttons for this post');
+        showInfo('Error: Could not find buttons');
+        return false;
+    }
+    
+    console.log('✅ Found buttons:', buttons);
+    
+    // Wait a bit before clicking (to simulate human behavior)
+    await sleep(1000 + Math.random() * 2000); // 1-3 seconds random delay
+    
+    try {
+        if (shouldApprove) {
+            console.log('✅ APPROVING post #' + postNumber);
+            buttons.approve.click();
+            showInfo(`✅ APPROVED Post #${postNumber}`);
+        } else {
+            console.log('❌ DECLINING post #' + postNumber);
+            buttons.decline.click();
+            showInfo(`❌ DECLINED Post #${postNumber}`);
+        }
+        
+        // Wait a bit after clicking
+        await sleep(1000);
+        return true;
+        
+    } catch (error) {
+        console.log('❌ Error clicking button:', error);
+        showInfo('Error clicking button: ' + error.message);
+        return false;
+    }
+}
+
+// OpenAI-based auto approve/decline functionality
+async function handleOpenAIAutoApprove(postElement, postData, config) {
+    console.log('🤖 Starting OpenAI-based auto approve/decline');
+    console.log('📝 Post data:', postData);
+    
+    // Show info to user
+    showInfo(`🤖 Waiting for OpenAI decision...`);
+    
+    // Wait for OpenAI response in Google Sheets column H
+    const decision = await waitForOpenAIDecision(postData.url, config);
+    
+    if (!decision) {
+        console.log('⏰ No OpenAI decision received, skipping auto-action');
+        showInfo('⏰ OpenAI timeout - no action taken');
+        return false;
+    }
+    
+    console.log('🎯 OpenAI Decision:', decision);
+    
+    // Find the approve/decline buttons for this specific post
+    const buttons = findApproveDeclineButtons(postElement);
+    
+    if (!buttons.approve || !buttons.decline) {
+        console.log('❌ Could not find approve/decline buttons for this post');
+        showInfo('Error: Could not find buttons');
+        return false;
+    }
+    
+    console.log('✅ Found buttons for OpenAI action:', buttons);
+    
+    // Wait a bit before clicking (to simulate human behavior)
+    await sleep(1000 + Math.random() * 2000); // 1-3 seconds random delay
+    
+    try {
+        if (decision === 'YES') {
+            console.log('✅ OpenAI says APPROVE - approving post');
+            buttons.approve.click();
+            showInfo(`✅ OpenAI APPROVED post`);
+        } else if (decision === 'NO') {
+            console.log('❌ OpenAI says DECLINE - declining post');
+            buttons.decline.click();
+            showInfo(`❌ OpenAI DECLINED post`);
+        } else {
+            console.log('⏭️ OpenAI says SKIP - no action taken');
+            showInfo(`⏭️ OpenAI SKIPPED post`);
+            return true; // Success but no action
+        }
+        
+        // Wait a bit after clicking
+        await sleep(1000);
+        return true;
+        
+    } catch (error) {
+        console.log('❌ Error clicking button based on OpenAI decision:', error);
+        showInfo('Error clicking button: ' + error.message);
+        return false;
+    }
+}
+
+// Wait for OpenAI decision in Google Sheets column H
+async function waitForOpenAIDecision(postUrl, config, maxWaitTimeMs = 60000) {
+    console.log('⏳ Waiting for OpenAI decision in Google Sheets column H...');
+    console.log('🔍 Post URL:', postUrl);
+    
+    const startTime = Date.now();
+    const checkInterval = 3000; // Check every 3 seconds
+    
+    while (Date.now() - startTime < maxWaitTimeMs) {
+        try {
+            // Read the current row from Google Sheets to check column H
+            const decision = await readOpenAIDecisionFromSheets(postUrl, config);
+            
+            if (decision && (decision === 'YES' || decision === 'NO' || decision === 'SKIP')) {
+                console.log('✅ Found OpenAI decision:', decision);
+                return decision;
+            }
+            
+            console.log('⏳ Still waiting for OpenAI decision... elapsed:', Math.round((Date.now() - startTime) / 1000), 'seconds');
+            await sleep(checkInterval);
+            
+        } catch (error) {
+            console.log('❌ Error checking OpenAI decision:', error);
+            await sleep(checkInterval);
+        }
+    }
+    
+    console.log('⏰ Timeout waiting for OpenAI decision');
+    return null;
+}
+
+// Read OpenAI decision from Google Sheets column H
+async function readOpenAIDecisionFromSheets(postUrl, config) {
+    return new Promise((resolve, reject) => {
+        // Send message to background script to read from sheets
+        chrome.runtime.sendMessage({
+            action: "readOpenAIDecision",
+            config: config,
+            postUrl: postUrl
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.log('❌ Error reading OpenAI decision:', chrome.runtime.lastError);
+                reject(chrome.runtime.lastError);
+            } else if (response && response.success) {
+                resolve(response.decision);
+            } else {
+                console.log('❌ Failed to read OpenAI decision:', response);
+                resolve(null);
+            }
+        });
+    });
+}
+
+function findApproveDeclineButtons(postElement) {
+    console.log('🔍 Looking for approve/decline buttons in post element');
+    
+    // Try different selectors for approve/decline buttons
+    const approveSelectors = [
+        '[aria-label*="Approve"]',
+        '[aria-label*="approve"]',
+        '[data-testid*="approve"]',
+        'div[role="button"][aria-label*="Approve"]',
+        'span[aria-label*="Approve"]'
+    ];
+    
+    const declineSelectors = [
+        '[aria-label*="Decline"]',
+        '[aria-label*="decline"]',
+        '[aria-label*="Delete"]',
+        '[aria-label*="Remove"]',
+        '[data-testid*="decline"]',
+        'div[role="button"][aria-label*="Decline"]',
+        'span[aria-label*="Decline"]'
+    ];
+    
+    let approveButton = null;
+    let declineButton = null;
+    
+    // Look for buttons within the post element and nearby
+    const searchAreas = [
+        postElement,
+        postElement.parentElement,
+        postElement.parentElement?.parentElement
+    ].filter(Boolean);
+    
+    for (const area of searchAreas) {
+        // Try approve selectors
+        for (const selector of approveSelectors) {
+            try {
+                const button = area.querySelector(selector);
+                if (button && !approveButton) {
+                    approveButton = button;
+                    console.log('Found approve button with selector:', selector);
+                    break;
+                }
+            } catch (e) {
+                // Ignore selector errors
+            }
+        }
+        
+        // Try decline selectors
+        for (const selector of declineSelectors) {
+            try {
+                const button = area.querySelector(selector);
+                if (button && !declineButton) {
+                    declineButton = button;
+                    console.log('Found decline button with selector:', selector);
+                    break;
+                }
+            } catch (e) {
+                // Ignore selector errors
+            }
+        }
+        
+        if (approveButton && declineButton) break;
+    }
+    
+    // Alternative method: look for all buttons and check their text content
+    if (!approveButton || !declineButton) {
+        console.log('🔍 Using alternative button detection method');
+        
+        for (const area of searchAreas) {
+            const allButtons = area.querySelectorAll('button, div[role="button"], span[role="button"]');
+            
+            for (const button of allButtons) {
+                const text = button.innerText?.toLowerCase() || '';
+                const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+                const allText = text + ' ' + ariaLabel;
+                
+                if (!approveButton && (allText.includes('approve') || allText.includes('אשר'))) {
+                    approveButton = button;
+                    console.log('Found approve button by text content:', text || ariaLabel);
+                }
+                
+                if (!declineButton && (allText.includes('decline') || allText.includes('delete') || 
+                                     allText.includes('remove') || allText.includes('דחה') || 
+                                     allText.includes('מחק'))) {
+                    declineButton = button;
+                    console.log('Found decline button by text content:', text || ariaLabel);
+                }
+            }
+        }
+    }
+    
+    return {
+        approve: approveButton,
+        decline: declineButton
+    };
 }
