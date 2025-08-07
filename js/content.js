@@ -657,6 +657,12 @@ function findWordInText(word, text) {
     let findWord = word.trim();
     console.log(`  Searching for: "${findWord}" in text`);
     
+    // Check for wildcard (stars) - should match all posts
+    if (findWord === '*' || findWord === '**' || findWord === '***' || findWord === '****' || findWord === '*****' || findWord === '******') {
+        console.log('  Using wildcard search (stars detected) - matches all posts');
+        return true;
+    }
+    
     if (findWord.indexOf('"') > -1) {
         // find exact phrase
         console.log('  Using exact phrase search (quotes detected)');
