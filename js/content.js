@@ -222,70 +222,98 @@ async function readPendingPosts(data) {
     
     if (posts.length === 0) {
         // Look for pending posts in a more targeted way for the new Facebook interface
-        const pendingContainer = document.querySelector('[data-pagelet*="PendingPosts"]') || 
-                                document.querySelector('[aria-label*="Pending" i]') ||
-                                document.querySelector('[role="main"]');
+        console.log('Searching for actual pending posts...');
         
-        if (pendingContainer) {
-            // New approach: Look for any div that contains both post content AND approve/decline buttons
-            const potentialPosts = [];
+        // First, try to find the main content area where posts would be
+        const mainContentAreas = [
+            document.querySelector('[role="main"]'),
+            document.querySelector('[data-pagelet="GroupPendingPostsFeed"]'),
+            document.querySelector('[aria-label*="feed" i]')
+        ].filter(Boolean);
+        
+        console.log('Found main content areas:', mainContentAreas.length);
+        
+        const potentialPosts = [];
+        
+        for (let contentArea of mainContentAreas) {
+            // Look specifically for the blue "Approve" buttons that are actual post actions
+            const approveButtons = contentArea.querySelectorAll('div[role="button"], button');
             
-            // First, find all buttons with "Approve" text (case insensitive)
-            const approveButtons = Array.from(document.querySelectorAll('*')).filter(el => 
-                el.textContent && el.textContent.toLowerCase().includes('approve') && 
-                el.tagName.toLowerCase() !== 'html' && el.tagName.toLowerCase() !== 'body'
-            );
+            console.log('Found buttons in content area:', approveButtons.length);
             
-            console.log('Found approve buttons:', approveButtons.length);
+            const actualApproveButtons = Array.from(approveButtons).filter(button => {
+                const text = button.textContent?.toLowerCase() || '';
+                const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+                
+                // Look for actual approve buttons (not menu items)
+                return (text.includes('approve') || ariaLabel.includes('approve') || 
+                        text.includes('אישור') || ariaLabel.includes('אישור')) &&
+                       // Exclude navigation/menu items
+                       !text.includes('admin') && !text.includes('manage') && 
+                       !text.includes('community') && !text.includes('tools') &&
+                       !ariaLabel.includes('navigation') && !ariaLabel.includes('menu');
+            });
             
-            // For each approve button, find its parent container that looks like a post
-            for (let button of approveButtons) {
+            console.log('Found actual approve buttons:', actualApproveButtons.length);
+            
+            // For each actual approve button, find its post container
+            for (let button of actualApproveButtons) {
                 let parent = button.parentElement;
                 let attempts = 0;
                 
-                // Go up the DOM tree to find a substantial container, but not too far
+                // Go up the DOM tree to find the post container
                 while (parent && attempts < 8) {
-                    const parentText = parent.innerText;
-                    
-                    // Skip if we've gone too far up (html, body elements)
+                    // Skip if we've gone too far up
                     if (parent.tagName.toLowerCase() === 'html' || 
                         parent.tagName.toLowerCase() === 'body') {
                         break;
                     }
                     
-                    // Check if this parent looks like a post container
+                    const parentText = parent.innerText;
+                    
+                    // Check if this looks like a post container
                     if (parentText && 
-                        parentText.length > 100 && 
-                        parentText.length < 3000 &&
+                        parentText.length > 50 && 
+                        parentText.length < 2000 &&
                         parentText.includes('Approve') && 
                         parentText.includes('Decline')) {
                         
-                        // Make sure it contains meaningful content (not just UI elements)
-                        const lines = parentText.split('\n');
-                        const contentLines = lines.filter(line => {
+                        // Make sure it's not navigation/admin content
+                        const lowerText = parentText.toLowerCase();
+                        if (lowerText.includes('admin tools') || 
+                            lowerText.includes('community home') ||
+                            lowerText.includes('manage discussions') ||
+                            lowerText.includes('group settings') ||
+                            lowerText.includes('badge requests') ||
+                            lowerText.includes('potential spam') ||
+                            lowerText.includes('scheduled posts')) {
+                            break; // This is admin navigation, not a post
+                        }
+                        
+                        // Look for actual post content indicators
+                        const hasRealContent = parentText.split('\n').some(line => {
                             const trimmed = line.trim();
-                            return trimmed.length > 20 && 
+                            return trimmed.length > 15 && 
                                    !trimmed.includes('Approve') && 
                                    !trimmed.includes('Decline') &&
                                    !trimmed.includes('Send') &&
-                                   !trimmed.match(/^\d+[mhd]$/i) && // Skip time stamps
-                                   !trimmed.match(/^\d+ .*(ago|hours|minutes|days)/i) && // Skip "5 minutes ago"
-                                   !trimmed.includes('·') &&
-                                   !trimmed.toLowerCase().includes('communities') &&
-                                   !trimmed.toLowerCase().includes('facebook');
+                                   !trimmed.includes('Admin') &&
+                                   !trimmed.includes('Community') &&
+                                   !trimmed.includes('Manage') &&
+                                   !trimmed.match(/^\d+[mhd]$/i);
                         });
                         
-                        if (contentLines.length > 0) {
-                            // Make sure we don't add duplicates or nested elements
+                        if (hasRealContent) {
+                            // Make sure we don't add duplicates
                             const isDuplicate = potentialPosts.some(existingPost => 
                                 existingPost.contains(parent) || parent.contains(existingPost)
                             );
                             
                             if (!isDuplicate) {
-                                console.log('Found potential pending post with content lines:', contentLines.length);
-                                console.log('Sample content:', contentLines[0]?.substring(0, 100));
+                                console.log('Found potential real pending post');
+                                console.log('Post content preview:', parentText.substring(0, 200));
                                 potentialPosts.push(parent);
-                                break; // Found a good container, stop going up
+                                break;
                             }
                         }
                     }
@@ -294,9 +322,36 @@ async function readPendingPosts(data) {
                     attempts++;
                 }
             }
-            
-            posts = potentialPosts;
         }
+        
+        // If we still don't have posts, try a different approach - look for typical post structures
+        if (potentialPosts.length === 0) {
+            console.log('No posts found via approve buttons, trying structural approach...');
+            
+            // Look for div structures that typically contain posts
+            const possiblePostContainers = document.querySelectorAll('div[data-testid], div[aria-label], div[role]');
+            
+            for (let container of possiblePostContainers) {
+                const text = container.innerText;
+                if (text && 
+                    text.length > 100 && 
+                    text.length < 1500 &&
+                    text.includes('Approve') && 
+                    text.includes('Decline') &&
+                    // Make sure it's not admin UI
+                    !text.includes('Admin tools') &&
+                    !text.includes('Community home') &&
+                    !text.includes('Group settings') &&
+                    !text.includes('Badge requests')) {
+                    
+                    console.log('Found potential post via structural search');
+                    console.log('Content preview:', text.substring(0, 150));
+                    potentialPosts.push(container);
+                }
+            }
+        }
+        
+        posts = potentialPosts;
         console.log('Found potential posts with manual detection:', posts.length);
     }
     
@@ -577,15 +632,41 @@ function findPendingPostContent(post) {
         const text = div.innerText.trim();
         
         // Skip if it's UI text or too short/long
-        if (text.length < 15 || text.length > 2000) continue;
+        if (text.length < 15 || text.length > 800) continue;
         if (text.includes('Approve') || text.includes('Decline')) continue;
         if (text.includes('אישור') || text.includes('דחיה')) continue;
         if (text.includes('Send') || text.includes('Hide')) continue;
         if (text.includes('See More') || text.includes('Show less')) continue;
         if (text.match(/^\d+[mhd]$/)) continue; // Skip timestamps like "1m", "2h"
         if (text.match(/^\d+ .*ago$/)) continue; // Skip "5 minutes ago" etc
-        if (text.toLowerCase().includes('communities')) continue; // Skip Facebook UI
-        if (text.toLowerCase().includes('facebook')) continue; // Skip Facebook UI
+        
+        // Skip Facebook admin/navigation content
+        if (text.toLowerCase().includes('communities')) continue;
+        if (text.toLowerCase().includes('facebook')) continue;
+        if (text.toLowerCase().includes('admin tools')) continue;
+        if (text.toLowerCase().includes('community home')) continue;
+        if (text.toLowerCase().includes('overview')) continue;
+        if (text.toLowerCase().includes('admin assist')) continue;
+        if (text.toLowerCase().includes('badge requests')) continue;
+        if (text.toLowerCase().includes('pending posts')) continue;
+        if (text.toLowerCase().includes('potential spam')) continue;
+        if (text.toLowerCase().includes('scheduled posts')) continue;
+        if (text.toLowerCase().includes('activity log')) continue;
+        if (text.toLowerCase().includes('group rules')) continue;
+        if (text.toLowerCase().includes('member-reported')) continue;
+        if (text.toLowerCase().includes('moderation alerts')) continue;
+        if (text.toLowerCase().includes('group status')) continue;
+        if (text.toLowerCase().includes('community roles')) continue;
+        if (text.toLowerCase().includes('group settings')) continue;
+        if (text.toLowerCase().includes('manage discussions')) continue;
+        if (text.toLowerCase().includes('add features')) continue;
+        if (text.toLowerCase().includes('insights')) continue;
+        if (text.toLowerCase().includes('engagement')) continue;
+        if (text.toLowerCase().includes('admins & moderators')) continue;
+        if (text.toLowerCase().includes('group experts')) continue;
+        if (text.toLowerCase().includes('participants')) continue;
+        if (text.toLowerCase().includes('help center')) continue;
+        if (text.toLowerCase().includes('groups hub')) continue;
         if (text.includes('·')) continue; // Skip UI elements with dots
         
         // Check if this div is likely the main content (not nested deep with many children)
@@ -608,60 +689,8 @@ function findPendingPostContent(post) {
         return candidates[0].text;
     }
     
-    // Look for the main text content - usually in a div with dir="auto"
-    const dirAutoElements = post.querySelectorAll('[dir="auto"]');
-    for (let element of dirAutoElements) {
-        const text = element.innerText.trim();
-        if (text && text.length > 15 && 
-            !text.includes('Approve') && 
-            !text.includes('Decline') &&
-            !text.includes('Send') &&
-            !text.toLowerCase().includes('communities') &&
-            !text.toLowerCase().includes('facebook') &&
-            !text.match(/^\d+[mhd]$/)) {
-            console.log('Found content via dir="auto" selector');
-            return text;
-        }
-    }
-    
-    // Look for spans with meaningful text (but not UI elements)
-    const spans = post.querySelectorAll('span');
-    let longestText = '';
-    for (let span of spans) {
-        const text = span.innerText.trim();
-        if (text.length > 15 && text.length > longestText.length &&
-            !text.includes('Approve') && !text.includes('Decline') &&
-            !text.includes('אישור') && !text.includes('דחיה') &&
-            !text.includes('Send') && !text.match(/^\d+[mhd]$/) &&
-            !text.toLowerCase().includes('communities') &&
-            !text.toLowerCase().includes('facebook') &&
-            span.children.length === 0) {
-            longestText = text;
-        }
-    }
-    
-    if (longestText.length > 15) {
-        console.log('Found content via span analysis');
-        return longestText;
-    }
-    
-    // Get all text content as fallback, but try to clean it
-    const fullText = post.innerText || '';
-    const lines = fullText.split('\n');
-    const filteredLines = lines.filter(line => {
-        const trimmed = line.trim();
-        return trimmed.length > 10 && 
-               !trimmed.includes('Approve') && !trimmed.includes('Decline') &&
-               !trimmed.includes('אישור') && !trimmed.includes('דחיה') &&
-               !trimmed.includes('Send') && !trimmed.match(/^\d+[mhd]$/) &&
-               !trimmed.includes('·') && !trimmed.includes('hrs') && !trimmed.includes('min') &&
-               !trimmed.toLowerCase().includes('communities') &&
-               !trimmed.toLowerCase().includes('facebook');
-    });
-    
-    const cleanedText = filteredLines.slice(0, 5).join(' ').trim(); // Take only first 5 relevant lines
-    console.log('Using fallback content extraction, length:', cleanedText.length);
-    return cleanedText;
+    console.log('No suitable content found - this might be admin UI, not a real post');
+    return 'No post content found';
 }
 
 function findPendingPostWriter(post) {
