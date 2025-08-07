@@ -476,27 +476,81 @@ async function scrapPendingPostData(data, post, keywords) {
 }
 
 function findPendingPostURL(post) {
+    console.log('Looking for post URL...');
+    
     // Try different selectors for pending posts URLs
     let linkElement = post.querySelector('[href*="/pending_posts/"]');
+    console.log('Found pending_posts link:', !!linkElement);
+    
     if (!linkElement) {
         linkElement = post.querySelector('[href*="/posts/"]');
+        console.log('Found posts link:', !!linkElement);
     }
+    
     if (!linkElement) {
         linkElement = post.querySelector('[href*="/permalink/"]');
+        console.log('Found permalink link:', !!linkElement);
     }
+    
     if (!linkElement) {
-        linkElement = post.querySelector('a[href*="facebook.com"]');
+        // Look for any link that points to a specific post
+        const allLinks = post.querySelectorAll('a[href]');
+        for (let link of allLinks) {
+            const href = link.href;
+            if (href && (
+                href.includes('/groups/') && 
+                (href.includes('/posts/') || href.includes('/permalink/') || href.includes('/pending_posts/'))
+            )) {
+                linkElement = link;
+                console.log('Found group post link:', href);
+                break;
+            }
+        }
+    }
+    
+    if (!linkElement) {
+        // Look for any link in the post that might be the post URL
+        linkElement = post.querySelector('a[href*="facebook.com/groups"]');
+        console.log('Found facebook groups link:', !!linkElement);
     }
     
     if (linkElement) {
         let url = linkElement.href;
+        console.log('Original URL found:', url);
+        
         // Convert pending_posts URL to regular posts URL for consistency
         url = url.replace('/pending_posts/', '/posts/');
+        console.log('Processed URL:', url);
+        
         return buildPostPermalink(url);
     }
     
+    // Try to construct a URL from the current page and look for post ID
+    const currentUrl = window.location.href;
+    const groupMatch = currentUrl.match(/groups\/(\d+)/);
+    
+    if (groupMatch) {
+        const groupId = groupMatch[1];
+        // Look for any element that might contain a post ID
+        const possibleIds = post.querySelectorAll('[id*="feed_story"], [data-testid*="story"], [aria-describedby]');
+        
+        for (let element of possibleIds) {
+            const id = element.id || element.getAttribute('aria-describedby') || element.getAttribute('data-testid');
+            if (id && id.includes('_')) {
+                const postId = id.split('_').pop();
+                if (postId && postId.length > 5) {
+                    const constructedUrl = `https://www.facebook.com/groups/${groupId}/posts/${postId}/`;
+                    console.log('Constructed URL from ID:', constructedUrl);
+                    return constructedUrl;
+                }
+            }
+        }
+    }
+    
     // Generate a unique identifier if no URL found
-    return 'pending-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    const uniqueId = 'pending-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    console.log('No URL found, generating unique ID:', uniqueId);
+    return uniqueId;
 }
 
 function findPendingPostContent(post) {
