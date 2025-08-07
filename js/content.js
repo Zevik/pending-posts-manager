@@ -678,20 +678,20 @@ async function scrapPendingPostData(data, post, keywords) {
     console.log('Sending to sheets with config:', data.config);
     chrome.runtime.sendMessage({action: "sendToSheets", config: data.config, postData: postData});
     
-    // Auto approve/decline feature for test group
+    // Auto approve/decline feature - now works for all groups
     const currentGroupName = data.config.groupsConfig['group-name-' + groupIndex];
     console.log('🔍 Checking auto-approve condition for group:', currentGroupName);
     
     // Increment local post counter for this run
     window.currentRunPostCount = (window.currentRunPostCount || 0) + 1;
     
-    // Check if auto-approve is enabled and this is the test group
-    if (data.config['auto-approve-enabled'] && (currentGroupName === 'test-group' || currentGroupName === 'טסט')) {
+    // Check if auto-approve is enabled for all groups
+    if (data.config['auto-approve-enabled']) {
         console.log('🤖 AUTO-APPROVE ENABLED for group:', currentGroupName);
         console.log('📊 Using OpenAI-based decision making');
         await handleOpenAIAutoApprove(post, postData, data.config);
     } else {
-        console.log('⏭️ Auto-approve disabled or not test group. Enabled:', data.config['auto-approve-enabled'], 'Group:', currentGroupName);
+        console.log('⏭️ Auto-approve disabled. Enabled:', data.config['auto-approve-enabled'], 'Group:', currentGroupName);
     }
     
     return true;
