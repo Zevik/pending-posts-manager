@@ -301,8 +301,47 @@ async function readPendingPosts(data) {
         }
     }
 
+    console.log(`=== FINISHED PROCESSING ${posts.length} PENDING POSTS ===`);
+
     // For pending posts, we typically don't have pagination like regular feed
-    // So we finish with the current group and move to next
+    // All pending posts are usually loaded on a single page
+    // But let's check if there's a "See More" or "Load More" button
+    
+    console.log('Looking for load more buttons...');
+    const loadMoreButtons = document.querySelectorAll('[role="button"]');
+    let foundLoadMore = false;
+    
+    for (let button of loadMoreButtons) {
+        const buttonText = button.innerText.toLowerCase();
+        if (buttonText.includes('see more') || buttonText.includes('load more') || 
+            buttonText.includes('show more') || buttonText.includes('עוד') ||
+            buttonText.includes('more')) {
+            console.log('Found potential load more button:', button.innerText);
+            foundLoadMore = true;
+            
+            // Try to click it
+            try {
+                button.click();
+                console.log('Clicked load more button');
+                showInfo('Loading more pending posts...');
+                
+                // Wait for new posts to load
+                await sleep(3000);
+                
+                // Recursively call this function to process new posts
+                await readPendingPosts(data);
+                return;
+            } catch (error) {
+                console.log('Error clicking load more button:', error);
+            }
+        }
+    }
+    
+    if (!foundLoadMore) {
+        console.log('No load more buttons found');
+    }
+    
+    console.log('Finished processing all pending posts in this group');
     showInfo("Finished processing pending posts, go to next group!");
     chrome.runtime.sendMessage({
         action: "bg-continue-next-group",
@@ -318,30 +357,39 @@ function truncate(input) {
 };
 
 async function scrapPendingPostData(data, post, keywords) {
-    console.log('pending post', post);
-    console.log('keywords', keywords);
+    console.log('=== PROCESSING PENDING POST ===');
+    console.log('post element:', post);
+    console.log('keywords to search:', keywords);
     
     // Try to find post URL from pending posts structure
     let postURL = findPendingPostURL(post);
-    console.log('postURL', postURL);
+    console.log('postURL found:', postURL);
     
     // If the post URL was already scraped, we don't need to take it.
     if (!postURL || data.config.existingPostURL.includes(postURL)) {
+        console.log('Post already processed or no URL found:', postURL);
         showInfo("Already processed the url:" + postURL);
         return true;
     }
 
     let postDate = findPendingPostDate(post);
-    console.log('postDate', postDate);
+    console.log('postDate found:', postDate);
 
     const text = findPendingPostContent(post);
+    console.log('Post content found:', text);
+    console.log('Content length:', text.length);
+    
     showInfo("Processing pending post:" + truncate(text));
     
     let foundKeyword = findKeywordOnText(text, keywords);
+    console.log('Keyword search result:', foundKeyword);
+    
     if (foundKeyword == undefined) {
+        console.log('No keyword found in this post, skipping');
         return true;
     }
     
+    console.log('✅ KEYWORD FOUND:', foundKeyword);
     showInfo("Processing pending post:" + truncate(text) + "!\n Found key word:" + foundKeyword);
 
     let postData = new Object();
@@ -352,12 +400,14 @@ async function scrapPendingPostData(data, post, keywords) {
     postData['writer'] = findPendingPostWriter(post);
     postData['groupName'] = groupName;
     postData['status'] = 'pending'; // Mark as pending post
+    
+    console.log('Final post data to save:', postData);
     log('pending post', postData);
 
     numberOfRowOnGGSheets = numberOfRowOnGGSheets + 1;
     data.config.rowIndex = numberOfRowOnGGSheets;
     data.config.existingPostURL.push(postURL);
-    console.log('sendToSheets', data.config);
+    console.log('Sending to sheets with config:', data.config);
     chrome.runtime.sendMessage({action: "sendToSheets", config: data.config, postData: postData});
     return true;
 }
@@ -507,40 +557,66 @@ function buildPostPermalink(url) {
  * @param keywords
  */
 function findKeywordOnText(text, keywords) {
-    for (let keyword of keywords) {
-        keyword = keyword.trim();
-        console.log('keyword', keyword);
+    console.log('=== SEARCHING FOR KEYWORDS ===');
+    console.log('Text to search in:', text);
+    console.log('Keywords array:', keywords);
+    
+    for (let i = 0; i < keywords.length; i++) {
+        let keyword = keywords[i].trim();
+        console.log(`Checking keyword ${i+1}/${keywords.length}: "${keyword}"`);
+        
         // and condition
         if (keyword.indexOf("+") > -1) {
+            console.log('Processing AND condition (+)');
             const findWords = keyword.split("+");
-            const found = findWords.every(word => findWordInText(word, text))
+            console.log('Words to find (all required):', findWords);
+            const found = findWords.every(word => {
+                const wordFound = findWordInText(word, text);
+                console.log(`  Word "${word}" found: ${wordFound}`);
+                return wordFound;
+            });
             if (found) {
+                console.log('✅ AND condition matched:', keyword);
+                return keyword;
+            }
+        } else {
+            // normal case
+            console.log('Processing normal keyword search');
+            const found = findWordInText(keyword, text);
+            console.log(`Word "${keyword}" found: ${found}`);
+            if (found) {
+                console.log('✅ Keyword matched:', keyword);
                 return keyword;
             }
         }
-
-        // normal case
-        if (findWordInText(keyword, text)) {
-            return keyword;
-        }
     }
+    console.log('❌ No keywords found in text');
     return undefined;
 }
 
 function findWordInText(word, text) {
     let findWord = word.trim();
+    console.log(`  Searching for: "${findWord}" in text`);
+    
     if (findWord.indexOf('"') > -1) {
-        // find exact
-        let words = text.replace( /\n/g," ").split(" ");
-        console.log('words', words);
+        // find exact phrase
+        console.log('  Using exact phrase search (quotes detected)');
+        let words = text.replace(/\n/g," ").split(" ");
+        console.log('  Text split into words:', words.length, 'words');
         findWord = findWord.replaceAll('"', "");
-        if (words.includes(findWord)) {
-            return true;
-        }
+        console.log(`  Looking for exact word: "${findWord}"`);
+        const found = words.includes(findWord);
+        console.log(`  Exact word found: ${found}`);
+        return found;
     } else {
-        return text.indexOf(findWord) > -1;
+        // find substring (case insensitive)
+        console.log('  Using substring search (case insensitive)');
+        const textLower = text.toLowerCase();
+        const findWordLower = findWord.toLowerCase();
+        const found = textLower.indexOf(findWordLower) > -1;
+        console.log(`  Substring "${findWordLower}" found: ${found}`);
+        return found;
     }
-    return false;
 }
 
 // ---- Common functions -----
