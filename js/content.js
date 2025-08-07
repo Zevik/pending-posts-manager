@@ -232,7 +232,8 @@ async function readPendingPosts(data) {
             
             // First, find all buttons with "Approve" text (case insensitive)
             const approveButtons = Array.from(document.querySelectorAll('*')).filter(el => 
-                el.textContent && el.textContent.toLowerCase().includes('approve')
+                el.textContent && el.textContent.toLowerCase().includes('approve') && 
+                el.tagName.toLowerCase() !== 'html' && el.tagName.toLowerCase() !== 'body'
             );
             
             console.log('Found approve buttons:', approveButtons.length);
@@ -242,35 +243,47 @@ async function readPendingPosts(data) {
                 let parent = button.parentElement;
                 let attempts = 0;
                 
-                // Go up the DOM tree to find a substantial container
-                while (parent && attempts < 10) {
+                // Go up the DOM tree to find a substantial container, but not too far
+                while (parent && attempts < 8) {
                     const parentText = parent.innerText;
+                    
+                    // Skip if we've gone too far up (html, body elements)
+                    if (parent.tagName.toLowerCase() === 'html' || 
+                        parent.tagName.toLowerCase() === 'body') {
+                        break;
+                    }
                     
                     // Check if this parent looks like a post container
                     if (parentText && 
-                        parentText.length > 50 && 
-                        parentText.length < 5000 &&
+                        parentText.length > 100 && 
+                        parentText.length < 3000 &&
                         parentText.includes('Approve') && 
                         parentText.includes('Decline')) {
                         
                         // Make sure it contains meaningful content (not just UI elements)
-                        const hasContent = parentText.split('\n').some(line => {
+                        const lines = parentText.split('\n');
+                        const contentLines = lines.filter(line => {
                             const trimmed = line.trim();
                             return trimmed.length > 20 && 
                                    !trimmed.includes('Approve') && 
                                    !trimmed.includes('Decline') &&
                                    !trimmed.includes('Send') &&
-                                   !trimmed.match(/^\d+[mhd]$/); // Skip time stamps like "1m", "2h", "3d"
+                                   !trimmed.match(/^\d+[mhd]$/i) && // Skip time stamps
+                                   !trimmed.match(/^\d+ .*(ago|hours|minutes|days)/i) && // Skip "5 minutes ago"
+                                   !trimmed.includes('·') &&
+                                   !trimmed.toLowerCase().includes('communities') &&
+                                   !trimmed.toLowerCase().includes('facebook');
                         });
                         
-                        if (hasContent) {
-                            // Make sure we don't add duplicates
+                        if (contentLines.length > 0) {
+                            // Make sure we don't add duplicates or nested elements
                             const isDuplicate = potentialPosts.some(existingPost => 
                                 existingPost.contains(parent) || parent.contains(existingPost)
                             );
                             
                             if (!isDuplicate) {
-                                console.log('Found potential pending post:', parent);
+                                console.log('Found potential pending post with content lines:', contentLines.length);
+                                console.log('Sample content:', contentLines[0]?.substring(0, 100));
                                 potentialPosts.push(parent);
                                 break; // Found a good container, stop going up
                             }
@@ -502,20 +515,6 @@ function findPendingPostContent(post) {
         return contentElement.innerText;
     }
     
-    // Look for the main text content - usually in a div with dir="auto"
-    const dirAutoElements = post.querySelectorAll('[dir="auto"]');
-    for (let element of dirAutoElements) {
-        const text = element.innerText.trim();
-        if (text && text.length > 10 && 
-            !text.includes('Approve') && 
-            !text.includes('Decline') &&
-            !text.includes('Send') &&
-            !text.match(/^\d+[mhd]$/)) { // Skip timestamps
-            console.log('Found content via dir="auto" selector');
-            return text;
-        }
-    }
-    
     // Look for text in divs, but exclude UI elements - improved logic
     const textDivs = post.querySelectorAll('div');
     let candidates = [];
@@ -531,6 +530,9 @@ function findPendingPostContent(post) {
         if (text.includes('See More') || text.includes('Show less')) continue;
         if (text.match(/^\d+[mhd]$/)) continue; // Skip timestamps like "1m", "2h"
         if (text.match(/^\d+ .*ago$/)) continue; // Skip "5 minutes ago" etc
+        if (text.toLowerCase().includes('communities')) continue; // Skip Facebook UI
+        if (text.toLowerCase().includes('facebook')) continue; // Skip Facebook UI
+        if (text.includes('·')) continue; // Skip UI elements with dots
         
         // Check if this div is likely the main content (not nested deep with many children)
         if (div.children.length <= 3) {
@@ -548,7 +550,24 @@ function findPendingPostContent(post) {
     if (candidates.length > 0) {
         console.log('Found content via div analysis, candidates:', candidates.length);
         console.log('Selected content length:', candidates[0].length);
+        console.log('Selected content preview:', candidates[0].text.substring(0, 100));
         return candidates[0].text;
+    }
+    
+    // Look for the main text content - usually in a div with dir="auto"
+    const dirAutoElements = post.querySelectorAll('[dir="auto"]');
+    for (let element of dirAutoElements) {
+        const text = element.innerText.trim();
+        if (text && text.length > 15 && 
+            !text.includes('Approve') && 
+            !text.includes('Decline') &&
+            !text.includes('Send') &&
+            !text.toLowerCase().includes('communities') &&
+            !text.toLowerCase().includes('facebook') &&
+            !text.match(/^\d+[mhd]$/)) {
+            console.log('Found content via dir="auto" selector');
+            return text;
+        }
     }
     
     // Look for spans with meaningful text (but not UI elements)
@@ -560,6 +579,8 @@ function findPendingPostContent(post) {
             !text.includes('Approve') && !text.includes('Decline') &&
             !text.includes('אישור') && !text.includes('דחיה') &&
             !text.includes('Send') && !text.match(/^\d+[mhd]$/) &&
+            !text.toLowerCase().includes('communities') &&
+            !text.toLowerCase().includes('facebook') &&
             span.children.length === 0) {
             longestText = text;
         }
@@ -575,14 +596,16 @@ function findPendingPostContent(post) {
     const lines = fullText.split('\n');
     const filteredLines = lines.filter(line => {
         const trimmed = line.trim();
-        return trimmed.length > 5 && 
+        return trimmed.length > 10 && 
                !trimmed.includes('Approve') && !trimmed.includes('Decline') &&
                !trimmed.includes('אישור') && !trimmed.includes('דחיה') &&
                !trimmed.includes('Send') && !trimmed.match(/^\d+[mhd]$/) &&
-               !trimmed.includes('·') && !trimmed.includes('hrs') && !trimmed.includes('min');
+               !trimmed.includes('·') && !trimmed.includes('hrs') && !trimmed.includes('min') &&
+               !trimmed.toLowerCase().includes('communities') &&
+               !trimmed.toLowerCase().includes('facebook');
     });
     
-    const cleanedText = filteredLines.join(' ').trim();
+    const cleanedText = filteredLines.slice(0, 5).join(' ').trim(); // Take only first 5 relevant lines
     console.log('Using fallback content extraction, length:', cleanedText.length);
     return cleanedText;
 }
