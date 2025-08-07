@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+    <title>Pending Posts Scanner Configuration</title>
+    <link href="../css/options.css" rel="stylesheet" type="text/css" media="all"/>
+    <script src="../js/options.js"></script>
+    <script src="../js/lib/jquery-3.5.1.min.js"></script>
+    <script src="../js/lib/googleapi.min.js"></script>
+    <script src="../js/googleapi-utils.js"></script>
+</head>
+<body style="display: none">
+    <div class="section info-area" style="background-color: #e3f2fd; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+        <h3 style="color: #1976d2; margin-top: 0;">📋 Pending Posts Scanner</h3>
+        <p style="margin: 10px 0;"><strong>How to use:</strong></p>
+        <ul style="margin: 5px 0; padding-left: 20px;">
+            <li>Enter group URLs ending with <code>/pending</code> (e.g., https://www.facebook.com/groups/123456789/pending)</li>
+            <li>This extension scans pending posts waiting for approval, not published posts</li>
+            <li>Found keywords will be saved to Google Sheets with "pending" status</li>
+        </ul>
+        <p style="margin: 10px 0; color: #f57c00;"><strong>Note:</strong> You must be an admin/moderator to access pending posts!</p>
+    </div>
+    <div class="section interval-area">
+        <div class="row">
+            <label class="label column-1">Interval time (seconds) between post</label>
+            <input id="interval-post" class="input-data column-2" type="number"/>
+        </div>
+        <div class="row">
+            <label class="label column-1">Interval time (minutes) between groups</label>
+            <input id="interval-groups" class="input-data column-2" type="number"/>
+        </div>
+        <div class="row">
+            <label class="label column-1">Interval time (minutes) between round</label>
+            <input id="interval-round" class="input-data column-2" type="number"/>
+        </div>
+        <div class="row">
+            <label class="label column-1">How many pages scrolling back</label>
+            <input id="scrolling-back-pages" class="input-data column-2" type="number"/>
+        </div>
+        <div class="row" id="google-sheets-settings">
+            <label class="label column-1">Setting google sheet URL</label>
+            <input id="setting-sheet-url" class="input-data column-2"/>
+        </div>
+        <div class="row" id="google-sheets-area">
+            <label class="label column-1">Google sheet URL</label>
+            <input id="sheet-url" class="input-data column-2"/>
+        </div>
+        <div class="row" id="google-form-area">
+            <label class="label column-1">Google form id</label>
+            <input id="google-form-id" class="input-data column-2"/>
+        </div>
+        <div class="row" id="rerun-interval-area">
+            <label class="label column-1">RERUN interval time (hours)</label>
+            <input id="rerun-interval" class="input-data column-2"/>
+        </div>
+        <div class="row day-break">
+            <label class="label column-1">Daily break</label>
+        </div>
+        <div class="row">
+            <label class="label column-1">from</label>
+            <input id="dailybreak-from" class="input-data column-2"/>
+        </div>
+        <div class="row">
+            <label class="label column-1">to</label>
+            <input id="dailybreak-to" class="input-data column-2"/>
+        </div>
+    </div>
+    <hr>
+    <div class="section">
+        <div class="row button-row">
+            <button id="start" class="btn blue">Start</button>
+            <button id="stop" class="btn blue" style="display: none">Stop</button>
+        </div>
+    </div>
+
+</body>
+</html>

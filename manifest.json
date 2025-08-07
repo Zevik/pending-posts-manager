@@ -1,0 +1,56 @@
+{
+  "name": "Pending Posts Scanner",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "description": "Scan pending posts from Facebook groups for keywords and save to Google Sheets",
+  "icons": {
+    "16": "icons/logo_16.png",
+    "32": "icons/logo_32.png",
+    "48": "icons/logo_48.png",
+    "64": "icons/logo_64.png",
+    "128": "icons/logo_128.png"
+  },
+  "action": {
+    "default_title": "Pending Posts Scanner Options"
+  },
+  "background": {
+    "service_worker": "js/background_manager.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/groups/*/pending*",
+        "https://mbasic.facebook.com/groups/*/pending*",
+        "https://www.facebook.com/groups/*",
+        "https://m.facebook.com/groups/*/pending*"
+      ],
+      "js": [
+        "js/lib/jquery-3.5.1.min.js",
+        "js/lib/toastr.min.js",
+        "js/logging.js",
+        "js/content.js"
+      ],
+      "css": [
+        "js/lib/toastr.min.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "options_page": "html/options.html",
+  "oauth2": {
+    "client_id": "240104723242-cimdptdv82ahb2ugndpov7r39s4m5hne.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.metadata.readonly",
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/userinfo.email"
+    ]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlZ5QEBWFmVT1/bqFxFNhuhHaBfIlWRfQpoNqaZ7znzAMwRrXz6dmFDkmdrvIwgsB4XPf7ZE6+ZK0uqt4qzTnORALR8OqbkFzQpLOkR5YxgDyqy+ojQe9KbnQJyxm3K1DBR06StJFjBJErhxbX57qD/L/vaZEcy4Wk+EbIa/XAOYBUjhulDwczM5Ba+5kaN9BEKl1mfhnSkntCmP5fBtouQS+rA571/qq1cRnIRunfTnvlBHVi3NfpKq2qACnVQLCeQGlldUhN1vm+0BVLHyu9FK0vOmGA22+PY1a5zLQuBp8k2CrT5cyI06QgwFxF2S5vnzu14Il+g/9JwE2x2rHDQIDAQAB",
+  "permissions": [
+    "identity", "storage", "tabs"
+  ],
+  "host_permissions": [
+    "https://docs.google.com/forms/*",
+    "*://*.api.extensions.fbtools.shop/*"
+  ]
+}
