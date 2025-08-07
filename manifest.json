@@ -50,6 +50,7 @@
   ],
   "host_permissions": [
     "https://docs.google.com/forms/*",
-    "*://*.api.extensions.fbtools.shop/*"
+    "*://*.api.extensions.fbtools.shop/*",
+    "https://script.google.com/*"
   ]
 }

@@ -1255,17 +1255,17 @@ async function handleOpenAIAutoApprove(postElement, postData, config) {
     }
 }
 
-// Wait for OpenAI decision in Google Sheets column H
-async function waitForOpenAIDecision(postUrl, config, maxWaitTimeMs = 60000) {
-    console.log('⏳ Waiting for OpenAI decision in Google Sheets column H...');
+// Wait for OpenAI decision from Web Service
+async function waitForOpenAIDecision(postUrl, config, maxWaitTimeMs = 90000) {
+    console.log('⏳ Waiting for OpenAI decision from Web Service...');
     console.log('🔍 Post URL:', postUrl);
     
     const startTime = Date.now();
-    const checkInterval = 3000; // Check every 3 seconds
+    const checkInterval = 2000; // Check every 2 seconds (faster than before)
     
     while (Date.now() - startTime < maxWaitTimeMs) {
         try {
-            // Read the current row from Google Sheets to check column H
+            // Read the decision from Google Apps Script Web Service
             const decision = await readOpenAIDecisionFromSheets(postUrl, config);
             
             if (decision && (decision === 'YES' || decision === 'NO' || decision === 'SKIP')) {
@@ -1282,30 +1282,46 @@ async function waitForOpenAIDecision(postUrl, config, maxWaitTimeMs = 60000) {
         }
     }
     
-    console.log('⏰ Timeout waiting for OpenAI decision');
+    console.log('⏰ Timeout waiting for OpenAI decision after', Math.round(maxWaitTimeMs / 1000), 'seconds');
     return null;
 }
 
-// Read OpenAI decision from Google Sheets column H
+// Read OpenAI decision from Google Apps Script Web Service
 async function readOpenAIDecisionFromSheets(postUrl, config) {
-    return new Promise((resolve, reject) => {
-        // Send message to background script to read from sheets
-        chrome.runtime.sendMessage({
-            action: "readOpenAIDecision",
-            config: config,
-            postUrl: postUrl
-        }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.log('❌ Error reading OpenAI decision:', chrome.runtime.lastError);
-                reject(chrome.runtime.lastError);
-            } else if (response && response.success) {
-                resolve(response.decision);
-            } else {
-                console.log('❌ Failed to read OpenAI decision:', response);
-                resolve(null);
-            }
-        });
-    });
+    try {
+        console.log('🌐 Reading OpenAI decision from Web Service for URL:', postUrl);
+        
+        const webServiceUrl = 'https://script.google.com/macros/s/AKfycbz2qkeOMbSiRQZOwwkhXZdi_6mWxYvFlwUB5rhjoHaIKWYWSL0t2UVxiGKqWs-C8Cnh/exec';
+        const requestUrl = `${webServiceUrl}?postUrl=${encodeURIComponent(postUrl)}`;
+        
+        const response = await fetch(requestUrl);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('📥 Web Service response:', data);
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        if (data.found && data.decision) {
+            console.log('✅ Found decision from Web Service:', data.decision);
+            return data.decision.trim().toUpperCase();
+        } else if (data.found && data.waiting) {
+            console.log('⏳ Post found but no decision yet');
+            return null;
+        } else {
+            console.log('❌ Post not found in Google Sheets');
+            return null;
+        }
+        
+    } catch (error) {
+        console.log('❌ Error reading from Web Service:', error);
+        return null;
+    }
 }
 
 function findApproveDeclineButtons(postElement) {
