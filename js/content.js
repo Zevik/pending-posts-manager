@@ -151,6 +151,12 @@ async function readPendingPosts(data) {
     console.log('Keywords:', keywords);
     console.log('Current URL:', window.location.href);
     
+    // Initialize processed posts tracking if not exists
+    if (!window.processedPosts) {
+        window.processedPosts = new Set();
+    }
+    console.log('Already processed posts:', window.processedPosts.size);
+    
     // Wait a bit for page to fully load
     await sleep(2000);
     
@@ -421,6 +427,23 @@ async function readPendingPosts(data) {
 
     console.log(`=== FINISHED PROCESSING ${posts.length} PENDING POSTS ===`);
 
+    // Try scrolling down to load more content
+    console.log('Scrolling down to load more content...');
+    const scrollHeight = document.body.scrollHeight;
+    window.scrollTo(0, scrollHeight);
+    
+    // Wait for potential lazy loading
+    await sleep(2000);
+    
+    // Check if new content was loaded by comparing scroll height
+    const newScrollHeight = document.body.scrollHeight;
+    if (newScrollHeight > scrollHeight) {
+        console.log('New content loaded after scrolling, scanning again...');
+        showInfo('New content found, scanning...');
+        await readPendingPosts(data);
+        return;
+    }
+
     // For pending posts, we typically don't have pagination like regular feed
     // All pending posts are usually loaded on a single page
     // But let's check if there's a "See More" or "Load More" button
@@ -457,10 +480,28 @@ async function readPendingPosts(data) {
     
     if (!foundLoadMore) {
         console.log('No load more buttons found');
+        
+        // Try final scroll to see if there's more content
+        console.log('Trying final scroll to check for more content...');
+        window.scrollTo(0, document.body.scrollHeight);
+        await sleep(1500);
+        
+        const finalScrollHeight = document.body.scrollHeight;
+        if (finalScrollHeight > newScrollHeight) {
+            console.log('Additional content found after final scroll, scanning again...');
+            showInfo('Additional content found, scanning...');
+            await readPendingPosts(data);
+            return;
+        }
+        
+        console.log('No more content available - scanning complete');
+        console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
+        showInfo(`Pending posts scan completed - processed ${window.processedPosts ? window.processedPosts.size : 0} posts`);
     }
     
     console.log('Finished processing all pending posts in this group');
-    showInfo("Finished processing pending posts, go to next group!");
+    console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
+    showInfo(`Finished processing pending posts - total: ${window.processedPosts ? window.processedPosts.size : 0}, go to next group!`);
     chrome.runtime.sendMessage({
         action: "bg-continue-next-group",
         config: data.config
@@ -474,10 +515,27 @@ function truncate(input) {
     return input;
 };
 
+function generatePostId(postElement) {
+    // Try to find a unique identifier for the post
+    const textContent = postElement.innerText || postElement.textContent || '';
+    const firstWords = textContent.split(' ').slice(0, 10).join(' ');
+    const hash = firstWords.replace(/[^\w\s]/gi, '').replace(/\s+/g, '_').substring(0, 50);
+    return hash || `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 async function scrapPendingPostData(data, post, keywords) {
     console.log('=== PROCESSING PENDING POST ===');
     console.log('post element:', post);
     console.log('keywords to search:', keywords);
+    
+    // Generate a unique identifier for this post
+    const postId = generatePostId(post);
+    
+    // Check if we already processed this post
+    if (window.processedPosts && window.processedPosts.has(postId)) {
+        console.log('Post already processed, skipping:', postId);
+        return null;
+    }
     
     // Try to find post URL from pending posts structure
     let postURL = findPendingPostURL(post);
@@ -521,6 +579,12 @@ async function scrapPendingPostData(data, post, keywords) {
     
     console.log('Final post data to save:', postData);
     log('pending post', postData);
+
+    // Mark this post as processed
+    if (window.processedPosts) {
+        window.processedPosts.add(postId);
+        console.log('Added post to processed list:', postId);
+    }
 
     numberOfRowOnGGSheets = numberOfRowOnGGSheets + 1;
     data.config.rowIndex = numberOfRowOnGGSheets;
