@@ -221,44 +221,67 @@ async function readPendingPosts(data) {
     }
     
     if (posts.length === 0) {
-        // Look for pending posts in a more targeted way
+        // Look for pending posts in a more targeted way for the new Facebook interface
         const pendingContainer = document.querySelector('[data-pagelet*="PendingPosts"]') || 
                                 document.querySelector('[aria-label*="Pending" i]') ||
                                 document.querySelector('[role="main"]');
         
         if (pendingContainer) {
-            // Look for containers that have both text content and action buttons
+            // New approach: Look for any div that contains both post content AND approve/decline buttons
             const potentialPosts = [];
-            const divs = pendingContainer.querySelectorAll('div');
             
-            for (let div of divs) {
-                const divText = div.innerText;
-                // Check if this div contains a meaningful post
-                if (divText && divText.length > 100 && divText.length < 5000) {
-                    // Must contain approve/decline buttons to be a pending post
-                    const hasApproveButton = div.querySelector('[aria-label*="Approve" i]') || 
-                                            div.querySelector('[aria-label*="אישור" i]') ||
-                                            divText.includes('Approve') || divText.includes('אישור');
-                    const hasDeclineButton = div.querySelector('[aria-label*="Decline" i]') || 
-                                            div.querySelector('[aria-label*="דחיה" i]') ||
-                                            divText.includes('Decline') || divText.includes('דחיה');
+            // First, find all buttons with "Approve" text (case insensitive)
+            const approveButtons = Array.from(document.querySelectorAll('*')).filter(el => 
+                el.textContent && el.textContent.toLowerCase().includes('approve')
+            );
+            
+            console.log('Found approve buttons:', approveButtons.length);
+            
+            // For each approve button, find its parent container that looks like a post
+            for (let button of approveButtons) {
+                let parent = button.parentElement;
+                let attempts = 0;
+                
+                // Go up the DOM tree to find a substantial container
+                while (parent && attempts < 10) {
+                    const parentText = parent.innerText;
                     
-                    if (hasApproveButton && hasDeclineButton) {
-                        // Make sure it's not a child of another post we already found
-                        let isChildOfExisting = false;
-                        for (let existingPost of potentialPosts) {
-                            if (existingPost.contains(div)) {
-                                isChildOfExisting = true;
-                                break;
+                    // Check if this parent looks like a post container
+                    if (parentText && 
+                        parentText.length > 50 && 
+                        parentText.length < 5000 &&
+                        parentText.includes('Approve') && 
+                        parentText.includes('Decline')) {
+                        
+                        // Make sure it contains meaningful content (not just UI elements)
+                        const hasContent = parentText.split('\n').some(line => {
+                            const trimmed = line.trim();
+                            return trimmed.length > 20 && 
+                                   !trimmed.includes('Approve') && 
+                                   !trimmed.includes('Decline') &&
+                                   !trimmed.includes('Send') &&
+                                   !trimmed.match(/^\d+[mhd]$/); // Skip time stamps like "1m", "2h", "3d"
+                        });
+                        
+                        if (hasContent) {
+                            // Make sure we don't add duplicates
+                            const isDuplicate = potentialPosts.some(existingPost => 
+                                existingPost.contains(parent) || parent.contains(existingPost)
+                            );
+                            
+                            if (!isDuplicate) {
+                                console.log('Found potential pending post:', parent);
+                                potentialPosts.push(parent);
+                                break; // Found a good container, stop going up
                             }
                         }
-                        
-                        if (!isChildOfExisting) {
-                            potentialPosts.push(div);
-                        }
                     }
+                    
+                    parent = parent.parentElement;
+                    attempts++;
                 }
             }
+            
             posts = potentialPosts;
         }
         console.log('Found potential posts with manual detection:', posts.length);
@@ -464,46 +487,68 @@ function findPendingPostURL(post) {
 }
 
 function findPendingPostContent(post) {
+    console.log('Extracting content from post...');
+    
     // Try different selectors for pending post content
     let contentElement = post.querySelector('[data-testid="post_message"]');
     if (contentElement && contentElement.innerText.trim()) {
+        console.log('Found content via post_message selector');
         return contentElement.innerText;
     }
     
     contentElement = post.querySelector('.userContent');
     if (contentElement && contentElement.innerText.trim()) {
+        console.log('Found content via userContent selector');
         return contentElement.innerText;
     }
     
     // Look for the main text content - usually in a div with dir="auto"
-    contentElement = post.querySelector('[dir="auto"]');
-    if (contentElement && contentElement.innerText.trim() && 
-        !contentElement.innerText.includes('Approve') && 
-        !contentElement.innerText.includes('Decline')) {
-        return contentElement.innerText;
-    }
-    
-    // Look for text in divs, but exclude UI elements
-    const textDivs = post.querySelectorAll('div');
-    let bestContent = '';
-    for (let div of textDivs) {
-        const text = div.innerText.trim();
-        // Skip if it's UI text or too short
-        if (text.length > 20 && text.length < 2000 && 
-            !text.includes('Approve') && !text.includes('Decline') &&
-            !text.includes('אישור') && !text.includes('דחיה') &&
-            !text.includes('See More') && !text.includes('Hide') &&
-            !text.includes('·') && !text.includes('hrs') && !text.includes('min') &&
-            div.children.length <= 2) { // Not a complex container
-            
-            if (text.length > bestContent.length) {
-                bestContent = text;
-            }
+    const dirAutoElements = post.querySelectorAll('[dir="auto"]');
+    for (let element of dirAutoElements) {
+        const text = element.innerText.trim();
+        if (text && text.length > 10 && 
+            !text.includes('Approve') && 
+            !text.includes('Decline') &&
+            !text.includes('Send') &&
+            !text.match(/^\d+[mhd]$/)) { // Skip timestamps
+            console.log('Found content via dir="auto" selector');
+            return text;
         }
     }
     
-    if (bestContent.length > 20) {
-        return bestContent;
+    // Look for text in divs, but exclude UI elements - improved logic
+    const textDivs = post.querySelectorAll('div');
+    let candidates = [];
+    
+    for (let div of textDivs) {
+        const text = div.innerText.trim();
+        
+        // Skip if it's UI text or too short/long
+        if (text.length < 15 || text.length > 2000) continue;
+        if (text.includes('Approve') || text.includes('Decline')) continue;
+        if (text.includes('אישור') || text.includes('דחיה')) continue;
+        if (text.includes('Send') || text.includes('Hide')) continue;
+        if (text.includes('See More') || text.includes('Show less')) continue;
+        if (text.match(/^\d+[mhd]$/)) continue; // Skip timestamps like "1m", "2h"
+        if (text.match(/^\d+ .*ago$/)) continue; // Skip "5 minutes ago" etc
+        
+        // Check if this div is likely the main content (not nested deep with many children)
+        if (div.children.length <= 3) {
+            candidates.push({
+                element: div,
+                text: text,
+                length: text.length
+            });
+        }
+    }
+    
+    // Sort by length and pick the longest meaningful text
+    candidates.sort((a, b) => b.length - a.length);
+    
+    if (candidates.length > 0) {
+        console.log('Found content via div analysis, candidates:', candidates.length);
+        console.log('Selected content length:', candidates[0].length);
+        return candidates[0].text;
     }
     
     // Look for spans with meaningful text (but not UI elements)
@@ -511,15 +556,17 @@ function findPendingPostContent(post) {
     let longestText = '';
     for (let span of spans) {
         const text = span.innerText.trim();
-        if (text.length > 20 && text.length > longestText.length &&
+        if (text.length > 15 && text.length > longestText.length &&
             !text.includes('Approve') && !text.includes('Decline') &&
             !text.includes('אישור') && !text.includes('דחיה') &&
+            !text.includes('Send') && !text.match(/^\d+[mhd]$/) &&
             span.children.length === 0) {
             longestText = text;
         }
     }
     
-    if (longestText.length > 20) {
+    if (longestText.length > 15) {
+        console.log('Found content via span analysis');
         return longestText;
     }
     
@@ -528,13 +575,16 @@ function findPendingPostContent(post) {
     const lines = fullText.split('\n');
     const filteredLines = lines.filter(line => {
         const trimmed = line.trim();
-        return trimmed.length > 10 && 
+        return trimmed.length > 5 && 
                !trimmed.includes('Approve') && !trimmed.includes('Decline') &&
                !trimmed.includes('אישור') && !trimmed.includes('דחיה') &&
+               !trimmed.includes('Send') && !trimmed.match(/^\d+[mhd]$/) &&
                !trimmed.includes('·') && !trimmed.includes('hrs') && !trimmed.includes('min');
     });
     
-    return filteredLines.join('\n').trim();
+    const cleanedText = filteredLines.join(' ').trim();
+    console.log('Using fallback content extraction, length:', cleanedText.length);
+    return cleanedText;
 }
 
 function findPendingPostWriter(post) {
