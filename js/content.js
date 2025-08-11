@@ -169,7 +169,8 @@ async function readPendingPosts(data) {
     console.log('Current run post count:', window.currentRunPostCount);
     
     // Wait a bit for page to fully load
-    await sleep(2000);
+    console.log('⏳ Waiting for page to fully load...');
+    await sleep(3000); // Increased from 2000
     
     // Debug: Log page structure
     if (DEBUG) {
@@ -405,7 +406,8 @@ async function readPendingPosts(data) {
     if (DEBUG && posts.length > 0) {
         console.log('First post structure:', posts[0]);
         console.log('First post HTML sample:', posts[0].outerHTML.substring(0, 200) + '...');
-        console.log('First post content attempt:', findPendingPostContent(posts[0]));
+        // Skip async content extraction in debug to avoid blocking
+        console.log('Ready to process', posts.length, 'posts');
     }
     
     if (posts.length === 0) {
@@ -449,15 +451,50 @@ async function readPendingPosts(data) {
         return;
     }
 
-    for (let post of posts) {
+    // Process each post individually with proper timing
+    console.log(`🔄 Starting to process ${posts.length} posts individually...`);
+    
+    for (let i = 0; i < posts.length; i++) {
+        const post = posts[i];
+        const postNumber = i + 1;
+        
         try {
+            console.log(`\n=== PROCESSING POST ${postNumber}/${posts.length} ===`);
+            showInfo(`Processing post ${postNumber}/${posts.length}...`);
+            
+            // First, expand "See More" for this specific post and wait
+            console.log(`📖 Step 1: Expanding "See More" for post ${postNumber}...`);
+            const expanded = await expandSeeMore(post);
+            
+            if (expanded) {
+                console.log(`✅ Successfully expanded post ${postNumber}, waiting for content to load...`);
+                await sleep(2000); // Wait for expansion to complete
+            } else {
+                console.log(`ℹ️ No "See More" found for post ${postNumber} or already expanded`);
+                await sleep(500); // Short wait even if no expansion needed
+            }
+            
+            // Wait a bit more before processing content
+            console.log(`⏳ Step 2: Waiting before processing content for post ${postNumber}...`);
+            await sleep(1000);
+            
+            // Now process the post data
+            console.log(`📝 Step 3: Processing post data for post ${postNumber}...`);
             await scrapPendingPostData(data, post, keywords);
+            
+            // Wait between posts (increased delay)
             const delayTime = data.config["interval-post"] * 1000;
-            const randomDelayTime = delayTime + delayTime / 100 * getRandomInt(10, 15);
+            const randomDelayTime = delayTime + delayTime / 100 * getRandomInt(15, 25); // Increased randomness
+            
+            console.log(`⏱️ Step 4: Waiting ${Math.round(randomDelayTime/1000)}s before next post...`);
+            showInfo(`Completed post ${postNumber}/${posts.length}. Waiting before next...`);
             await sleep(randomDelayTime);
+            
         } catch (error) {
-            // ignore to go to next post
-            console.log('Error processing pending post:', error);
+            console.log(`❌ Error processing post ${postNumber}:`, error);
+            showInfo(`Error in post ${postNumber}, continuing...`);
+            // Continue to next post even if this one failed
+            await sleep(2000); // Wait before continuing
         }
     }
 
@@ -481,25 +518,26 @@ async function readPendingPosts(data) {
     }
 
     // Try scrolling down to load more content
-    console.log('Scrolling down to load more content...');
+    console.log('⏳ Scrolling down to load more content...');
+    showInfo('Checking for more content...');
     window.scrollCount++;
     const scrollHeight = document.body.scrollHeight;
     window.scrollTo(0, scrollHeight);
     
-    // Wait for potential lazy loading
-    await sleep(2000);
+    // Wait longer for potential lazy loading
+    await sleep(4000); // Increased from 2000
     
     // Check if new content was loaded by comparing scroll height
     const newScrollHeight = document.body.scrollHeight;
     if (newScrollHeight > scrollHeight) {
         console.log('New content loaded after scrolling, scanning again...');
         showInfo('New content found, scanning...');
+        await sleep(2000); // Additional wait for new content to stabilize
         await readPendingPosts(data);
         return;
     }
 
     // For pending posts, we typically don't have pagination like regular feed
-    // All pending posts are usually loaded on a single page
     // But let's check if there's a "See More" or "Load More" button
     
     console.log('Looking for load more buttons...');
@@ -508,18 +546,18 @@ async function readPendingPosts(data) {
     
     for (let button of loadMoreButtons) {
         const buttonText = button.innerText.toLowerCase();
-        if (buttonText.includes('see more')) {
-            console.log('Found see more button:', button.innerText);
+        if (buttonText.includes('see more') || buttonText.includes('load more') || buttonText.includes('show more')) {
+            console.log('Found load more button:', button.innerText);
             foundLoadMore = true;
             
             // Try to click it
             try {
+                console.log('Clicking load more button...');
                 button.click();
-                console.log('Clicked load more button');
                 showInfo('Loading more pending posts...');
                 
-                // Wait for new posts to load
-                await sleep(3000);
+                // Wait longer for new posts to load
+                await sleep(5000); // Increased from 3000
                 
                 // Recursively call this function to process new posts
                 await readPendingPosts(data);
@@ -536,12 +574,13 @@ async function readPendingPosts(data) {
         // Try final scroll to see if there's more content
         console.log('Trying final scroll to check for more content...');
         window.scrollTo(0, document.body.scrollHeight);
-        await sleep(1500);
+        await sleep(3000); // Increased wait time
         
         const finalScrollHeight = document.body.scrollHeight;
         if (finalScrollHeight > newScrollHeight) {
             console.log('Additional content found after final scroll, scanning again...');
             showInfo('Additional content found, scanning...');
+            await sleep(2000); // Wait for content to stabilize
             await readPendingPosts(data);
             return;
         }
@@ -639,7 +678,7 @@ async function scrapPendingPostData(data, post, keywords) {
     let postDate = findPendingPostDate(post);
     console.log('postDate found:', postDate);
 
-    const text = findPendingPostContent(post);
+    const text = await findPendingPostContent(post);
     console.log('Post content found:', text);
     console.log('Content length:', text.length);
     
@@ -773,43 +812,140 @@ function findPendingPostURL(post) {
 
 async function expandSeeMore(post) {
     try {
-        // Look for "See more" buttons in various forms
-        const seeMoreButtons = Array.from(post.querySelectorAll('div[role="button"]')).filter(btn => 
-            btn.textContent.includes('See more') || 
-            btn.textContent.includes('עוד') ||
-            btn.textContent.includes('להמשיך לקרוא')
-        );
+        console.log('🔍 Looking for "See more" buttons in post...');
         
-        if (seeMoreButtons.length > 0) {
-            console.log('Found See more button, clicking...');
-            seeMoreButtons[0].click();
-            // Wait for content to expand
-            await new Promise(resolve => setTimeout(resolve, 500));
-            return true;
+        // Look for "See more" buttons in various forms - more comprehensive search
+        const seeMoreSelectors = [
+            'div[role="button"]',
+            'span[role="button"]', 
+            '[aria-label*="See more"]',
+            '[aria-label*="see more"]',
+            '[aria-label*="Show more"]',
+            '[aria-label*="show more"]',
+            'button',
+            '[data-testid*="see-more"]',
+            '[data-testid*="expand"]'
+        ];
+        
+        let seeMoreButtons = [];
+        
+        // Search for buttons using different selectors
+        for (const selector of seeMoreSelectors) {
+            try {
+                const buttons = Array.from(post.querySelectorAll(selector));
+                seeMoreButtons = seeMoreButtons.concat(buttons);
+            } catch (e) {
+                // Ignore selector errors
+            }
         }
-        return false;
+        
+        // Filter buttons by text content (only English)
+        const filteredButtons = seeMoreButtons.filter(btn => {
+            const text = btn.textContent?.toLowerCase() || '';
+            const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
+            const allText = text + ' ' + ariaLabel;
+            
+            return allText.includes('see more') || 
+                   allText.includes('show more') ||
+                   text === '...' || 
+                   text.includes('…');
+        });
+        
+        console.log(`Found ${filteredButtons.length} potential "See more" buttons`);
+        
+        if (filteredButtons.length > 0) {
+            // Try clicking the first valid "See more" button
+            const button = filteredButtons[0];
+            console.log('🖱️ Found "See more" button, attempting to click...');
+            console.log('Button text:', button.textContent);
+            console.log('Button aria-label:', button.getAttribute('aria-label'));
+            
+            // Scroll button into view first
+            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await sleep(500); // Wait for scroll
+            
+            // Try different click methods
+            try {
+                // Method 1: Regular click
+                button.click();
+                console.log('✅ Clicked "See more" button using regular click');
+            } catch (e) {
+                try {
+                    // Method 2: Dispatch click event
+                    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                    console.log('✅ Clicked "See more" button using dispatchEvent');
+                } catch (e2) {
+                    try {
+                        // Method 3: Focus and simulate Enter key
+                        button.focus();
+                        button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                        console.log('✅ Clicked "See more" button using Enter key');
+                    } catch (e3) {
+                        console.log('❌ All click methods failed:', e3);
+                        return false;
+                    }
+                }
+            }
+            
+            // Wait for content to expand - increased wait time
+            console.log('⏳ Waiting for content to expand...');
+            await sleep(1500); // Increased from 500
+            
+            // Verify expansion by checking if button is gone or text changed
+            const buttonStillExists = post.contains(button);
+            const buttonTextChanged = button.textContent !== filteredButtons[0].textContent;
+            
+            if (!buttonStillExists || buttonTextChanged) {
+                console.log('✅ Content appears to have expanded successfully');
+                return true;
+            } else {
+                console.log('⚠️ Button still exists with same text, expansion may not have worked');
+                // Try clicking again
+                await sleep(500);
+                try {
+                    button.click();
+                    console.log('🔄 Tried clicking "See more" button again');
+                    await sleep(1000);
+                    return true;
+                } catch (e) {
+                    console.log('❌ Second click attempt failed:', e);
+                }
+            }
+            
+            return true;
+        } else {
+            console.log('ℹ️ No "See more" buttons found - content may already be expanded');
+            return false;
+        }
+        
     } catch (err) {
-        console.error('Error expanding See more:', err);
+        console.error('❌ Error expanding "See more":', err);
         return false;
     }
 }
 
-function findPendingPostContent(post) {
-    console.log('Extracting content from post...');
+async function findPendingPostContent(post) {
+    console.log('📖 Extracting content from post...');
     
-    // First try to expand any "See more" content
-    expandSeeMore(post).then(() => {
-        console.log('Finished expanding content if needed');
-    });
+    // First, ensure we expand any "See More" content and wait for it
+    console.log('🔄 Ensuring "See More" is expanded before extracting content...');
+    const expanded = await expandSeeMore(post);
+    
+    if (expanded) {
+        console.log('⏳ "See More" was expanded, waiting for content to stabilize...');
+        await sleep(1000); // Wait for content to fully load after expansion
+    }
     
     // Debug: Log all text content to understand the structure
-    console.log('=== DEBUG: ALL TEXT CONTENT ===');
+    console.log('=== DEBUG: ALL TEXT CONTENT AFTER EXPANSION ===');
     const allText = post.innerText || post.textContent || '';
-    console.log('Full post text:', allText.substring(0, 200));
+    console.log('Full post text length:', allText.length);
+    console.log('Full post text preview:', allText.substring(0, 300));
     
     // Log all text lines for debugging
     const allLines = allText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    console.log('All text lines:', allLines);
+    console.log('Total text lines:', allLines.length);
+    console.log('First 10 lines:', allLines.slice(0, 10));
     
     // Check if this is ONLY a UI navigation element with no real content
     const isPageHeader = allText.includes('Pending posts') && 
@@ -831,14 +967,35 @@ function findPendingPostContent(post) {
     // Try different selectors for pending post content
     let contentElement = post.querySelector('[data-testid="post_message"]');
     if (contentElement && contentElement.innerText.trim()) {
-        console.log('Found content via post_message selector');
+        console.log('✅ Found content via post_message selector');
         return contentElement.innerText.trim();
     }
     
     contentElement = post.querySelector('.userContent');
     if (contentElement && contentElement.innerText.trim()) {
-        console.log('Found content via userContent selector');
+        console.log('✅ Found content via userContent selector');
         return contentElement.innerText.trim();
+    }
+    
+    // Look for text content in common Facebook post content containers
+    const contentSelectors = [
+        '[data-ad-preview="message"]',
+        '[data-testid="story-content"]',
+        '[role="article"] > div > div > div',
+        '.story_body_container',
+        '.text_exposed_root'
+    ];
+    
+    for (const selector of contentSelectors) {
+        try {
+            contentElement = post.querySelector(selector);
+            if (contentElement && contentElement.innerText.trim()) {
+                console.log(`✅ Found content via ${selector} selector`);
+                return contentElement.innerText.trim();
+            }
+        } catch (e) {
+            // Ignore selector errors
+        }
     }
     
     // Look for actual post content by analyzing structure
@@ -850,9 +1007,9 @@ function findPendingPostContent(post) {
         
         // Skip UI elements and common patterns
         if (trimmed === 'Approve' || trimmed === 'Decline' || 
-            trimmed === 'אישור' || trimmed === 'דחיה' ||
             trimmed === 'Send' || trimmed === 'Facebook' ||
             trimmed === 'Share' || trimmed === 'Like' ||
+            trimmed === 'See more' ||
             trimmed.includes('Pending posts') ||
             trimmed.match(/^\d+\s*[·•]\s*\d*$/) || // Skip "7 · " patterns
             trimmed.match(/^\d+[mhd]$/i) || // Skip time patterns like "1m"
@@ -867,7 +1024,8 @@ function findPendingPostContent(post) {
         return true;
     });
     
-    console.log('Filtered content lines:', filteredLines);
+    console.log('Filtered content lines count:', filteredLines.length);
+    console.log('Filtered content lines:', filteredLines.slice(0, 5)); // Show first 5
     
     // Look for the main post content (usually comes after author info)
     let authorLine = '';
@@ -889,7 +1047,7 @@ function findPendingPostContent(post) {
         // Collect all substantial lines after author as potential content
         if (authorLine && line.length > 3) {
             contentLines.push(line);
-            console.log('Adding content line:', line);
+            console.log('Adding content line:', line.substring(0, 100));
         }
     }
     
@@ -898,35 +1056,28 @@ function findPendingPostContent(post) {
     
     // Return the content if found
     if (contentLine && contentLine.length > 3) {
-        // Remove "See more" from the end of content
-        let finalContent = contentLine.replace(/\s*(?:See more|עוד|להמשיך לקרוא)\s*$/i, '');
-        
-        // Check if content appears truncated
-        if (finalContent.endsWith('...') || finalContent.endsWith('…')) {
-            console.log('Content appears truncated, trying to expand...');
-            // Try clicking See More again in case it wasn't clicked before
-            expandSeeMore(post).then(() => {
-                console.log('Attempted to expand truncated content');
-            });
-        }
+        // Remove "See more" patterns from the end of content
+        let finalContent = contentLine.replace(/\s*(?:See more|\.{3,}|…+)\s*$/gi, '');
         
         console.log('=== FOUND POST CONTENT ===');
-        console.log('Content:', finalContent);
+        console.log('Content length:', finalContent.length);
+        console.log('Content preview:', finalContent.substring(0, 200));
         return finalContent;
     }
     
     // Fallback: look for any meaningful text that's not UI
     for (let line of filteredLines) {
-        if (line.length > 5 && 
+        if (line.length > 8 && 
             !line.includes('·') && 
-            !line.match(/^\d+[mhd]$/i)) {
+            !line.match(/^\d+[mhd]$/i) &&
+            !line.includes('See more')) {
             console.log('=== FALLBACK CONTENT ===');
             console.log('Content:', line);
             return line;
         }
     }
     
-    console.log('No post content found after structure analysis');
+    console.log('❌ No post content found after structure analysis');
     return 'No post content found';
 }
 
