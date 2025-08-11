@@ -508,10 +508,8 @@ async function readPendingPosts(data) {
     
     for (let button of loadMoreButtons) {
         const buttonText = button.innerText.toLowerCase();
-        if (buttonText.includes('see more') || buttonText.includes('load more') || 
-            buttonText.includes('show more') || buttonText.includes('עוד') ||
-            buttonText.includes('more')) {
-            console.log('Found potential load more button:', button.innerText);
+        if (buttonText.includes('see more')) {
+            console.log('Found see more button:', button.innerText);
             foundLoadMore = true;
             
             // Try to click it
@@ -773,8 +771,36 @@ function findPendingPostURL(post) {
     return uniqueId;
 }
 
+async function expandSeeMore(post) {
+    try {
+        // Look for "See more" buttons in various forms
+        const seeMoreButtons = Array.from(post.querySelectorAll('div[role="button"]')).filter(btn => 
+            btn.textContent.includes('See more') || 
+            btn.textContent.includes('עוד') ||
+            btn.textContent.includes('להמשיך לקרוא')
+        );
+        
+        if (seeMoreButtons.length > 0) {
+            console.log('Found See more button, clicking...');
+            seeMoreButtons[0].click();
+            // Wait for content to expand
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.error('Error expanding See more:', err);
+        return false;
+    }
+}
+
 function findPendingPostContent(post) {
     console.log('Extracting content from post...');
+    
+    // First try to expand any "See more" content
+    expandSeeMore(post).then(() => {
+        console.log('Finished expanding content if needed');
+    });
     
     // Debug: Log all text content to understand the structure
     console.log('=== DEBUG: ALL TEXT CONTENT ===');
@@ -822,53 +848,71 @@ function findPendingPostContent(post) {
     const filteredLines = allLines.filter(line => {
         const trimmed = line.trim();
         
-        // Skip UI elements
+        // Skip UI elements and common patterns
         if (trimmed === 'Approve' || trimmed === 'Decline' || 
             trimmed === 'אישור' || trimmed === 'דחיה' ||
             trimmed === 'Send' || trimmed === 'Facebook' ||
+            trimmed === 'Share' || trimmed === 'Like' ||
             trimmed.includes('Pending posts') ||
             trimmed.match(/^\d+\s*[·•]\s*\d*$/) || // Skip "7 · " patterns
             trimmed.match(/^\d+[mhd]$/i) || // Skip time patterns like "1m"
-            trimmed.match(/^[·•]\s*\d+$/)) { // Skip "· 7" patterns
+            trimmed.match(/^[·•]\s*\d+$/) || // Skip "· 7" patterns
+            trimmed.match(/^[A-Za-z0-9]{1,3}$/) || // Skip short codes
+            /^[A-Za-z0-9\s]{1,3}$/.test(trimmed) || // Skip very short text
+            trimmed.length <= 2) {
             return false;
         }
         
-        // Keep meaningful lines
-        return trimmed.length > 2;
+        // Keep meaningful lines that aren't repeated UI elements
+        return true;
     });
     
     console.log('Filtered content lines:', filteredLines);
     
     // Look for the main post content (usually comes after author info)
     let authorLine = '';
-    let contentLine = '';
+    let contentLines = [];
     
     for (let i = 0; i < filteredLines.length; i++) {
         const line = filteredLines[i];
         
-        // Skip very short lines
-        if (line.length <= 3) continue;
+        // Skip very short lines and single characters
+        if (line.length <= 3 || /^[A-Za-z0-9\s]{1,3}$/.test(line)) continue;
         
-        // First substantial line might be author name
-        if (!authorLine && line.length > 3 && line.length < 100) {
+        // First substantial line that looks like a name might be author
+        if (!authorLine && line.length > 3 && line.length < 100 && !line.includes('http')) {
             authorLine = line;
             console.log('Potential author line:', authorLine);
             continue;
         }
         
-        // Next substantial line is likely the content
-        if (authorLine && !contentLine && line.length > 3) {
-            contentLine = line;
-            console.log('Potential content line:', contentLine);
-            break;
+        // Collect all substantial lines after author as potential content
+        if (authorLine && line.length > 3) {
+            contentLines.push(line);
+            console.log('Adding content line:', line);
         }
     }
     
+    // Join multiple content lines if they exist
+    const contentLine = contentLines.length > 0 ? contentLines.join('\n') : '';
+    
     // Return the content if found
     if (contentLine && contentLine.length > 3) {
+        // Remove "See more" from the end of content
+        let finalContent = contentLine.replace(/\s*(?:See more|עוד|להמשיך לקרוא)\s*$/i, '');
+        
+        // Check if content appears truncated
+        if (finalContent.endsWith('...') || finalContent.endsWith('…')) {
+            console.log('Content appears truncated, trying to expand...');
+            // Try clicking See More again in case it wasn't clicked before
+            expandSeeMore(post).then(() => {
+                console.log('Attempted to expand truncated content');
+            });
+        }
+        
         console.log('=== FOUND POST CONTENT ===');
-        console.log('Content:', contentLine);
-        return contentLine;
+        console.log('Content:', finalContent);
+        return finalContent;
     }
     
     // Fallback: look for any meaningful text that's not UI
