@@ -887,6 +887,7 @@ function findPendingPostURL(post) {
         const postLinks = post.querySelectorAll('a[href]');
         for (let link of postLinks) {
             const href = link.href;
+            const linkText = link.textContent?.trim() || '';
             
             // Extract post IDs from URLs
             const pendingMatch = href.match(/\/pending_posts\/(\d+)/);
@@ -905,6 +906,54 @@ function findPendingPostURL(post) {
             if (permalinkMatch && permalinkMatch[1] !== groupId) {
                 foundIds.add(permalinkMatch[1]);
                 console.log('Found permalink ID in URL:', permalinkMatch[1]);
+            }
+            
+            // NEW: Extract post IDs from link text content
+            if (href.includes('/pending_posts') && linkText.length > 10) {
+                console.log('Analyzing pending_posts link text for post ID:', linkText);
+                
+                // Look for 16-digit sequences that match Facebook post ID pattern
+                const longNumericMatches = linkText.match(/\d{16}/g);
+                if (longNumericMatches) {
+                    longNumericMatches.forEach(id => {
+                        if (id !== groupId) {
+                            foundIds.add(id);
+                            console.log('✅ Found 16-digit post ID in link text:', id);
+                        }
+                    });
+                }
+                
+                // Also look for 15-digit sequences 
+                if (foundIds.size === 0) {
+                    const numericMatches = linkText.match(/\d{15}/g);
+                    if (numericMatches) {
+                        numericMatches.forEach(id => {
+                            if (id !== groupId) {
+                                foundIds.add(id);
+                                console.log('✅ Found 15-digit post ID in link text:', id);
+                            }
+                        });
+                    }
+                }
+                
+                // Look for the specific pattern we see: extract all numeric sequences and find the right one
+                if (foundIds.size === 0) {
+                    const allNumbers = linkText.match(/\d+/g);
+                    if (allNumbers) {
+                        console.log('All numeric sequences found in link text:', allNumbers);
+                        
+                        // Look for sequences that are 15+ digits (Facebook post IDs)
+                        const validPostIds = allNumbers.filter(num => 
+                            num.length >= 15 && num.length <= 19 && num !== groupId
+                        );
+                        
+                        if (validPostIds.length > 0) {
+                            const postId = validPostIds[0];
+                            foundIds.add(postId);
+                            console.log('✅ Found valid post ID from sequences:', postId);
+                        }
+                    }
+                }
             }
         }
         
