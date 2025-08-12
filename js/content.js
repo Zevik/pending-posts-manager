@@ -947,42 +947,10 @@ function findPendingPostURL(post) {
                             num.length >= 15 && num.length <= 19 && num !== groupId
                         );
                         
-                        console.log('Valid post ID candidates (15-19 digits):', validPostIds);
-                        
                         if (validPostIds.length > 0) {
                             const postId = validPostIds[0];
                             foundIds.add(postId);
                             console.log('✅ Found valid post ID from sequences:', postId);
-                        } else {
-                            // Try to combine sequences - sometimes Facebook splits the ID
-                            const combinedNumber = allNumbers.join('');
-                            console.log('Trying combined number:', combinedNumber);
-                            
-                            if (combinedNumber.length >= 15) {
-                                // Try to extract a 16-digit sequence from the combined number
-                                const extractedIds = combinedNumber.match(/\d{16}/g);
-                                if (extractedIds) {
-                                    extractedIds.forEach(id => {
-                                        if (id !== groupId) {
-                                            foundIds.add(id);
-                                            console.log('✅ Found post ID from combined sequences:', id);
-                                        }
-                                    });
-                                }
-                                
-                                // If no 16-digit, try 15-digit
-                                if (foundIds.size === 0) {
-                                    const extracted15 = combinedNumber.match(/\d{15}/g);
-                                    if (extracted15) {
-                                        extracted15.forEach(id => {
-                                            if (id !== groupId) {
-                                                foundIds.add(id);
-                                                console.log('✅ Found 15-digit post ID from combined sequences:', id);
-                                            }
-                                        });
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -1286,7 +1254,7 @@ async function findPendingPostContent(post) {
             return false;
         }
         
-        // Skip Wikipedia-style content patterns - ENHANCED
+        // Skip Wikipedia-style content patterns
         if (trimmed.includes('מצב שימור') ||
             trimmed.includes('מיון מדעי') ||
             trimmed.includes('ממלכה:') ||
@@ -1295,19 +1263,6 @@ async function findPendingPostContent(post) {
             trimmed.includes('סדרה:') ||
             trimmed.includes('Canis lupus') ||
             trimmed.includes('שם מדעי') ||
-            trimmed.includes('גזעים שונים של כלבים') ||
-            trimmed.includes('כלב מגזע') ||
-            trimmed.includes('כלב רועים') ||
-            trimmed.includes('כלבי צ\'יוואווה') ||
-            trimmed.includes('תחום הרגישות המרבית') ||
-            trimmed.includes('גור כלבים') ||
-            trimmed.includes('כלב בשירות צי') ||
-            trimmed.includes('כלב כנעני') ||
-            trimmed.includes('חברו הטוב ביותר של האדם') ||
-            trimmed.includes('בעל החיים המבוית') ||
-            trimmed.includes('תוחלת החיים של הכלבים') ||
-            trimmed.includes('צבעי כלבים נעים') ||
-            trimmed.includes('חיות חברתיות הצדים') ||
             (trimmed.includes('מפנה לכאן') && trimmed.includes('פירושונים')) ||
             trimmed.includes('בעלי חיים') ||
             trimmed.includes('יונקים') ||
