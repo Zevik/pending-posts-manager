@@ -805,7 +805,13 @@ function findPendingPostURL(post) {
     }
     
     // Generate a unique identifier if no URL found
-    const uniqueId = 'pending-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    // Use a simple counter to ensure uniqueness
+    if (!window.postUrlCounter) {
+        window.postUrlCounter = 0;
+    }
+    window.postUrlCounter++;
+    
+    const uniqueId = 'pending-' + Date.now() + '-' + window.postUrlCounter + '-' + Math.random().toString(36).substr(2, 9);
     console.log('No URL found, generating unique ID:', uniqueId);
     return uniqueId;
 }
