@@ -136,7 +136,7 @@ chrome.runtime.onMessage.addListener(async function(data, sender, sendResponse) 
     }
 });
 
-async function readPendingPosts(data) {
+async function readPendingPosts(data, isRecursiveCall = false) {
     groupIndex = data.config['currGroupIndex'];
     groupName = data.config.groupsConfig['group-name-' + groupIndex];
     keywords = data.config.groupsConfig["keywords-" + groupIndex].split(',');
@@ -146,25 +146,23 @@ async function readPendingPosts(data) {
     console.log('Group Name:', groupName);
     console.log('Keywords:', keywords);
     console.log('Current URL:', window.location.href);
+    console.log('Is recursive call:', isRecursiveCall);
     
     // Show that the extension is actively working on this specific group
     showInfo(`Pending Posts Scanner is actively scanning group: ${groupName}`);
     
-    // Reset post counter for this new run
-    window.currentRunPostCount = 0;
-    console.log('🔄 Reset post counter for new run');
-    
-    // Initialize processed posts tracking if not exists
-    if (!window.processedPosts) {
-        window.processedPosts = new Set();
+    // Reset all counters and tracking ONLY for the first call, not recursive calls
+    if (!isRecursiveCall) {
+        window.currentRunPostCount = 0;
+        window.processedPosts = new Set(); // Reset processed posts only for new group
+        window.scrollCount = 0; // Reset scroll counter only for new group
+        
+        console.log('🔄 Reset all counters for new group scan (first call)');
+    } else {
+        console.log('📝 Continuing scan (recursive call) - keeping existing processed posts');
     }
     
-    // Initialize scroll counter to prevent infinite scrolling
-    if (!window.scrollCount) {
-        window.scrollCount = 0;
-    }
-    
-    console.log('Already processed posts:', window.processedPosts.size);
+    console.log('Processed posts count:', window.processedPosts.size);
     console.log('Scroll attempts:', window.scrollCount);
     console.log('Current run post count:', window.currentRunPostCount);
     
@@ -533,7 +531,7 @@ async function readPendingPosts(data) {
         console.log('New content loaded after scrolling, scanning again...');
         showInfo('New content found, scanning...');
         await sleep(2000); // Additional wait for new content to stabilize
-        await readPendingPosts(data);
+        await readPendingPosts(data, true); // Recursive call
         return;
     }
 
@@ -560,7 +558,7 @@ async function readPendingPosts(data) {
                 await sleep(5000); // Increased from 3000
                 
                 // Recursively call this function to process new posts
-                await readPendingPosts(data);
+                await readPendingPosts(data, true); // Recursive call
                 return;
             } catch (error) {
                 console.log('Error clicking load more button:', error);
@@ -581,7 +579,7 @@ async function readPendingPosts(data) {
             console.log('Additional content found after final scroll, scanning again...');
             showInfo('Additional content found, scanning...');
             await sleep(2000); // Wait for content to stabilize
-            await readPendingPosts(data);
+            await readPendingPosts(data, true); // Recursive call
             return;
         }
         
@@ -607,40 +605,75 @@ function truncate(input) {
 };
 
 function generatePostId(postElement) {
-    // Try to find a unique identifier for the post using multiple approaches
+    console.log('🆔 Generating stable post ID...');
     
-    // Method 1: Look for unique data attributes or IDs
+    // Method 1: Look for unique data attributes or IDs (most reliable)
     const dataId = postElement.getAttribute('data-id') || 
                    postElement.getAttribute('id') || 
                    postElement.querySelector('[data-id]')?.getAttribute('data-id');
     if (dataId) {
-        return dataId;
+        console.log('✅ Found data-id:', dataId);
+        return `dataid_${dataId}`;
     }
     
-    // Method 2: Use position in DOM
+    // Method 2: Look for Facebook-specific IDs in the DOM structure
+    const elementsWithIds = postElement.querySelectorAll('[id]');
+    const fbIds = Array.from(elementsWithIds)
+        .map(el => el.id)
+        .filter(id => id && id.length > 5 && id.match(/\d{8,}/)) // Look for long numeric IDs
+        .slice(0, 2); // Take first 2 IDs
+    
+    if (fbIds.length > 0) {
+        const stableId = `fbid_${fbIds.join('_')}`;
+        console.log('✅ Generated ID from Facebook elements:', stableId);
+        return stableId;
+    }
+    
+    // Method 3: Create stable hash from content + DOM position
+    const textContent = postElement.innerText || postElement.textContent || '';
+    
+    // Extract the first few meaningful lines (skip UI elements)
+    const meaningfulLines = textContent.split('\n')
+        .filter(line => {
+            const trimmed = line.trim();
+            return trimmed && 
+                   trimmed.length > 3 &&
+                   trimmed !== 'Facebook' &&
+                   !trimmed.includes('Approve') &&
+                   !trimmed.includes('Decline') &&
+                   !trimmed.includes('Send') &&
+                   !trimmed.match(/^\d+[mhd]$/i) &&
+                   !trimmed.match(/^[·•]\s*\d+$/);
+        })
+        .slice(0, 3); // Take first 3 meaningful lines
+    
+    // Get stable position in DOM
     const siblings = Array.from(postElement.parentElement?.children || []);
     const position = siblings.indexOf(postElement);
     
-    // Method 3: Extract meaningful text content (skip repeated "Facebook" words)
-    const textContent = postElement.innerText || postElement.textContent || '';
-    const lines = textContent.split('\n').filter(line => 
-        line.trim() && 
-        line.trim() !== 'Facebook' && 
-        !line.includes('Facebook Facebook Facebook')
-    );
-    
-    // Get first meaningful line
-    const meaningfulText = lines.slice(0, 3).join(' ').trim();
-    
-    if (meaningfulText && meaningfulText.length > 5) {
-        // Create hash from meaningful text + position
-        const cleanText = meaningfulText.replace(/[^\w\s\u0590-\u05FF]/gi, '').replace(/\s+/g, '_');
-        const uniqueId = `${cleanText.substring(0, 30)}_pos${position}_${Date.now()}`;
-        return uniqueId;
+    if (meaningfulLines.length >= 1) {
+        // Use content + position for stable ID (NO timestamps!)
+        const contentForId = meaningfulLines.join('|');
+        const cleanContent = meaningfulLines[0]
+            .replace(/[^\w\s\u0590-\u05FF]/g, '') // Keep only letters, numbers, spaces, Hebrew
+            .replace(/\s+/g, '_') // Replace spaces with underscores
+            .substring(0, 30); // Limit length
+        
+        // Create a simple hash for additional uniqueness (stable, no random)
+        let contentHash = 0;
+        for (let i = 0; i < contentForId.length; i++) {
+            contentHash = ((contentHash << 5) - contentHash + contentForId.charCodeAt(i)) & 0xffffffff;
+        }
+        
+        const stableId = `content_${cleanContent}_pos${position}_${Math.abs(contentHash)}`;
+        console.log('✅ Generated stable content-based ID:', stableId.substring(0, 50) + '...');
+        return stableId;
     }
     
-    // Fallback: timestamp + position + random
-    return `post_${position}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Method 4: Position-based ID (as last resort)
+    const positionId = `position_${position}_${postElement.tagName || 'div'}`;
+    console.log('✅ Generated position-based ID:', positionId);
+    return positionId;
 }
 
 async function scrapPendingPostData(data, post, keywords) {
@@ -733,7 +766,20 @@ async function scrapPendingPostData(data, post, keywords) {
 }
 
 function findPendingPostURL(post) {
-    console.log('Looking for post URL...');
+    console.log('🔍 Looking for post URL...');
+    
+    // Debug: Log all links in the post to understand the structure
+    if (DEBUG) {
+        console.log('=== ALL LINKS IN POST ===');
+        const allLinks = post.querySelectorAll('a[href]');
+        allLinks.forEach((link, index) => {
+            console.log(`Link ${index + 1}:`, link.href);
+            console.log(`  Text:`, link.textContent?.trim());
+        });
+    }
+    
+    // Method 1: Look for direct post links in the content area
+    let foundURL = null;
     
     // Try different selectors for pending posts URLs
     let linkElement = post.querySelector('[href*="/pending_posts/"]');
@@ -749,70 +795,141 @@ function findPendingPostURL(post) {
         console.log('Found permalink link:', !!linkElement);
     }
     
+    // Method 2: Look for timestamp/date links (these often contain post URLs)
     if (!linkElement) {
-        // Look for any link that points to a specific post
-        const allLinks = post.querySelectorAll('a[href]');
-        for (let link of allLinks) {
+        const timeLinks = post.querySelectorAll('a[href]');
+        for (let link of timeLinks) {
+            const linkText = link.textContent?.trim() || '';
             const href = link.href;
+            
+            // Look for time/date links that point to posts
             if (href && (
-                href.includes('/groups/') && 
-                (href.includes('/posts/') || href.includes('/permalink/') || href.includes('/pending_posts/'))
+                linkText.includes('h') || linkText.includes('m') || linkText.includes('d') ||
+                linkText.includes('·') || linkText.match(/\d+/) ||
+                href.includes('/posts/') || href.includes('/permalink/')
             )) {
-                linkElement = link;
-                console.log('Found group post link:', href);
-                break;
-            }
-        }
-    }
-    
-    if (!linkElement) {
-        // Look for any link in the post that might be the post URL
-        linkElement = post.querySelector('a[href*="facebook.com/groups"]');
-        console.log('Found facebook groups link:', !!linkElement);
-    }
-    
-    if (linkElement) {
-        let url = linkElement.href;
-        console.log('Original URL found:', url);
-        
-        // Convert pending_posts URL to regular posts URL for consistency
-        url = url.replace('/pending_posts/', '/posts/');
-        console.log('Processed URL:', url);
-        
-        return buildPostPermalink(url);
-    }
-    
-    // Try to construct a URL from the current page and look for post ID
-    const currentUrl = window.location.href;
-    const groupMatch = currentUrl.match(/groups\/(\d+)/);
-    
-    if (groupMatch) {
-        const groupId = groupMatch[1];
-        // Look for any element that might contain a post ID
-        const possibleIds = post.querySelectorAll('[id*="feed_story"], [data-testid*="story"], [aria-describedby]');
-        
-        for (let element of possibleIds) {
-            const id = element.id || element.getAttribute('aria-describedby') || element.getAttribute('data-testid');
-            if (id && id.includes('_')) {
-                const postId = id.split('_').pop();
-                if (postId && postId.length > 5) {
-                    const constructedUrl = `https://www.facebook.com/groups/${groupId}/posts/${postId}/`;
-                    console.log('Constructed URL from ID:', constructedUrl);
-                    return constructedUrl;
+                if (href.includes('/groups/') && (href.includes('/posts/') || href.includes('/permalink/'))) {
+                    linkElement = link;
+                    console.log('Found timestamp post link:', href);
+                    break;
                 }
             }
         }
     }
     
-    // Generate a unique identifier if no URL found
-    // Use a simple counter to ensure uniqueness
+    // Method 3: Look for author name links that might point to the post
+    if (!linkElement) {
+        const authorLinks = post.querySelectorAll('a[href]');
+        for (let link of authorLinks) {
+            const href = link.href;
+            if (href && href.includes('/groups/') && 
+                (href.includes('/posts/') || href.includes('/permalink/') || href.includes('/pending_posts/'))) {
+                linkElement = link;
+                console.log('Found author post link:', href);
+                break;
+            }
+        }
+    }
+    
+    if (linkElement) {
+        let url = linkElement.href;
+        console.log('✅ Original URL found:', url);
+        
+        // Clean up URL - keep original format
+        url = url.split('?')[0]; // Remove query parameters
+        url = url.replace('mbasic.', 'www.'); // Convert to www
+        console.log('✅ Processed URL:', url);
+        
+        return url;
+    }
+    
+    // Method 4: Try to extract post ID from current URL and DOM elements
+    const currentUrl = window.location.href;
+    const groupMatch = currentUrl.match(/groups\/(\d+)/);
+    
+    if (groupMatch) {
+        const groupId = groupMatch[1];
+        console.log('🔍 Searching for post ID in group:', groupId);
+        
+        // Look for long numeric IDs that could be Facebook post IDs
+        const allElements = post.querySelectorAll('*');
+        const foundIds = new Set();
+        
+        for (let element of allElements) {
+            // Check various attributes for post IDs
+            const attrs = ['id', 'data-testid', 'aria-describedby', 'data-id'];
+            for (let attr of attrs) {
+                const value = element.getAttribute(attr);
+                if (value) {
+                    // Look for Facebook-style numeric IDs (15+ digits)
+                    const numericMatches = value.match(/\d{15,}/g);
+                    if (numericMatches) {
+                        numericMatches.forEach(id => {
+                            if (id !== groupId && id.length >= 15) { // Must be different from group ID and long enough
+                                foundIds.add(id);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        
+        if (foundIds.size > 0) {
+            // Use the first (hopefully most relevant) post ID found
+            const postId = Array.from(foundIds)[0];
+            const constructedUrl = `https://www.facebook.com/groups/${groupId}/posts/${postId}/`;
+            console.log('✅ Constructed URL from post ID:', constructedUrl);
+            console.log('Found post ID:', postId, '(different from group ID:', groupId + ')');
+            return constructedUrl;
+        }
+    }
+    
+    console.log('❌ No real post URL found, creating content-based identifier...');
+    
+    // Method 5: Create a stable identifier based on post content
+    const postContent = post.innerText || post.textContent || '';
+    
+    // Extract meaningful lines (not UI elements)
+    const meaningfulLines = postContent.split('\n')
+        .filter(line => {
+            const trimmed = line.trim();
+            return trimmed && 
+                   trimmed.length > 3 &&
+                   !trimmed.includes('Facebook') &&
+                   !trimmed.includes('Approve') &&
+                   !trimmed.includes('Decline') &&
+                   !trimmed.includes('Send') &&
+                   !trimmed.match(/^\d+[mhd]$/i) &&
+                   !trimmed.match(/^[·•]\s*\d+$/);
+        })
+        .slice(0, 3); // Take first 3 meaningful lines
+    
+    if (meaningfulLines.length >= 1) {
+        // Create a content-based identifier
+        const contentSample = meaningfulLines[0]
+            .replace(/[^\w\s\u0590-\u05FF]/g, '') // Keep only letters, numbers, spaces, Hebrew
+            .replace(/\s+/g, '_') // Replace spaces with underscores
+            .substring(0, 30); // Limit length
+        
+        // Add counter for uniqueness
+        if (!window.postUrlCounter) {
+            window.postUrlCounter = 0;
+        }
+        window.postUrlCounter++;
+        
+        const contentId = `content_${contentSample}_${window.postUrlCounter}`;
+        console.log('✅ Generated content-based ID:', contentId);
+        return contentId;
+    }
+    
+    // Last resort: timestamp-based unique ID
     if (!window.postUrlCounter) {
         window.postUrlCounter = 0;
     }
     window.postUrlCounter++;
     
-    const uniqueId = 'pending-' + Date.now() + '-' + window.postUrlCounter + '-' + Math.random().toString(36).substr(2, 9);
-    console.log('No URL found, generating unique ID:', uniqueId);
+    const uniqueId = 'pending-' + Date.now() + '-' + window.postUrlCounter;
+    console.log('⚠️ Generated timestamp-based ID:', uniqueId);
     return uniqueId;
 }
 
