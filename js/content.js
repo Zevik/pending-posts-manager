@@ -781,19 +781,47 @@ function findPendingPostURL(post) {
     // Method 1: Look for direct post links in the content area
     let foundURL = null;
     
-    // Try different selectors for pending posts URLs
-    let linkElement = post.querySelector('[href*="/pending_posts/"]');
-    console.log('Found pending_posts link:', !!linkElement);
+    // First, check all links for proper pending_posts URLs
+    const allLinks = post.querySelectorAll('a[href]');
+    let linkElement = null;
     
-    if (!linkElement) {
-        linkElement = post.querySelector('[href*="/posts/"]');
-        console.log('Found posts link:', !!linkElement);
+    for (let link of allLinks) {
+        const href = link.href;
+        if (href && href.includes('/pending_posts/') && href.match(/\/pending_posts\/\d+/)) {
+            // This is a real pending post URL with ID
+            linkElement = link;
+            console.log('Found real pending_posts link with ID:', href);
+            break;
+        }
     }
     
+    // If no pending_posts link found, try posts links
     if (!linkElement) {
-        linkElement = post.querySelector('[href*="/permalink/"]');
-        console.log('Found permalink link:', !!linkElement);
+        for (let link of allLinks) {
+            const href = link.href;
+            if (href && href.includes('/posts/') && href.match(/\/posts\/\d+/)) {
+                linkElement = link;
+                console.log('Found posts link with ID:', href);
+                break;
+            }
+        }
     }
+    
+    // Try permalink links
+    if (!linkElement) {
+        for (let link of allLinks) {
+            const href = link.href;
+            if (href && href.includes('/permalink/') && href.match(/\/permalink\/\d+/)) {
+                linkElement = link;
+                console.log('Found permalink link with ID:', href);
+                break;
+            }
+        }
+    }
+    
+    console.log('Found pending_posts link:', !!linkElement && linkElement.href?.includes('/pending_posts/'));
+    console.log('Found posts link:', !!linkElement && linkElement.href?.includes('/posts/'));
+    console.log('Found permalink link:', !!linkElement && linkElement.href?.includes('/permalink/'));
     
     // Method 2: Look for timestamp/date links (these often contain post URLs)
     if (!linkElement) {
@@ -851,13 +879,47 @@ function findPendingPostURL(post) {
         const groupId = groupMatch[1];
         console.log('🔍 Searching for post ID in group:', groupId);
         
-        // Look for long numeric IDs that could be Facebook post IDs
+        // Enhanced search for post IDs in the DOM
         const allElements = post.querySelectorAll('*');
         const foundIds = new Set();
         
+        // First, look for IDs in href attributes of all links
+        const postLinks = post.querySelectorAll('a[href]');
+        for (let link of postLinks) {
+            const href = link.href;
+            
+            // Extract post IDs from URLs
+            const pendingMatch = href.match(/\/pending_posts\/(\d+)/);
+            if (pendingMatch && pendingMatch[1] !== groupId) {
+                foundIds.add(pendingMatch[1]);
+                console.log('Found pending post ID in URL:', pendingMatch[1]);
+            }
+            
+            const postMatch = href.match(/\/posts\/(\d+)/);
+            if (postMatch && postMatch[1] !== groupId) {
+                foundIds.add(postMatch[1]);
+                console.log('Found post ID in URL:', postMatch[1]);
+            }
+            
+            const permalinkMatch = href.match(/\/permalink\/(\d+)/);
+            if (permalinkMatch && permalinkMatch[1] !== groupId) {
+                foundIds.add(permalinkMatch[1]);
+                console.log('Found permalink ID in URL:', permalinkMatch[1]);
+            }
+        }
+        
+        // If we found IDs from URLs, use the first one
+        if (foundIds.size > 0) {
+            const postId = Array.from(foundIds)[0];
+            const constructedUrl = `https://www.facebook.com/groups/${groupId}/pending_posts/${postId}/`;
+            console.log('✅ Constructed URL from extracted post ID:', constructedUrl);
+            return constructedUrl;
+        }
+        
+        // Fallback: Look for long numeric IDs in element attributes
         for (let element of allElements) {
             // Check various attributes for post IDs
-            const attrs = ['id', 'data-testid', 'aria-describedby', 'data-id'];
+            const attrs = ['id', 'data-testid', 'aria-describedby', 'data-id', 'data-ft'];
             for (let attr of attrs) {
                 const value = element.getAttribute(attr);
                 if (value) {
@@ -877,8 +939,8 @@ function findPendingPostURL(post) {
         if (foundIds.size > 0) {
             // Use the first (hopefully most relevant) post ID found
             const postId = Array.from(foundIds)[0];
-            const constructedUrl = `https://www.facebook.com/groups/${groupId}/posts/${postId}/`;
-            console.log('✅ Constructed URL from post ID:', constructedUrl);
+            const constructedUrl = `https://www.facebook.com/groups/${groupId}/pending_posts/${postId}/`;
+            console.log('✅ Constructed URL from DOM post ID:', constructedUrl);
             console.log('Found post ID:', postId, '(different from group ID:', groupId + ')');
             return constructedUrl;
         }
@@ -886,7 +948,7 @@ function findPendingPostURL(post) {
     
     console.log('❌ No real post URL found, creating content-based identifier...');
     
-    // Method 5: Create a stable identifier based on post content
+    // Method 5: Create a stable identifier based on post content and return proper warning
     const postContent = post.innerText || post.textContent || '';
     
     // Extract meaningful lines (not UI elements)
@@ -905,7 +967,7 @@ function findPendingPostURL(post) {
         .slice(0, 3); // Take first 3 meaningful lines
     
     if (meaningfulLines.length >= 1) {
-        // Create a content-based identifier
+        // Create a content-based identifier - but mark it clearly as not a real URL
         const contentSample = meaningfulLines[0]
             .replace(/[^\w\s\u0590-\u05FF]/g, '') // Keep only letters, numbers, spaces, Hebrew
             .replace(/\s+/g, '_') // Replace spaces with underscores
@@ -917,19 +979,19 @@ function findPendingPostURL(post) {
         }
         window.postUrlCounter++;
         
-        const contentId = `content_${contentSample}_${window.postUrlCounter}`;
-        console.log('✅ Generated content-based ID:', contentId);
+        const contentId = `[NO_URL]_content_${contentSample}_${window.postUrlCounter}`;
+        console.log('⚠️ Generated content-based placeholder (NOT A URL):', contentId);
         return contentId;
     }
     
-    // Last resort: timestamp-based unique ID
+    // Last resort: timestamp-based unique ID - but mark it clearly as not a real URL
     if (!window.postUrlCounter) {
         window.postUrlCounter = 0;
     }
     window.postUrlCounter++;
     
-    const uniqueId = 'pending-' + Date.now() + '-' + window.postUrlCounter;
-    console.log('⚠️ Generated timestamp-based ID:', uniqueId);
+    const uniqueId = '[NO_URL]_pending-' + Date.now() + '-' + window.postUrlCounter;
+    console.log('⚠️ Generated timestamp-based placeholder (NOT A URL):', uniqueId);
     return uniqueId;
 }
 
@@ -1143,6 +1205,28 @@ async function findPendingPostContent(post) {
             return false;
         }
         
+        // Skip Wikipedia-style content patterns
+        if (trimmed.includes('מצב שימור') ||
+            trimmed.includes('מיון מדעי') ||
+            trimmed.includes('ממלכה:') ||
+            trimmed.includes('מחלקה:') ||
+            trimmed.includes('משפחה:') ||
+            trimmed.includes('סדרה:') ||
+            trimmed.includes('Canis lupus') ||
+            trimmed.includes('שם מדעי') ||
+            (trimmed.includes('מפנה לכאן') && trimmed.includes('פירושונים')) ||
+            trimmed.includes('בעלי חיים') ||
+            trimmed.includes('יונקים') ||
+            trimmed.includes('טורפים')) {
+            return false;
+        }
+        
+        // Skip if line is just single words repeated (like "Facebook" multiple times)
+        const words = trimmed.split(/\s+/);
+        if (words.length > 5 && words.every(word => word === words[0])) {
+            return false;
+        }
+        
         // Keep meaningful lines that aren't repeated UI elements
         return true;
     });
@@ -1153,6 +1237,7 @@ async function findPendingPostContent(post) {
     // Look for the main post content (usually comes after author info)
     let authorLine = '';
     let contentLines = [];
+    let foundRealContent = false;
     
     for (let i = 0; i < filteredLines.length; i++) {
         const line = filteredLines[i];
@@ -1167,10 +1252,51 @@ async function findPendingPostContent(post) {
             continue;
         }
         
-        // Collect all substantial lines after author as potential content
-        if (authorLine && line.length > 3) {
+        // Check if this line looks like actual post content
+        if (authorLine && line.length > 10) {
+            // Skip if it's clearly not post content
+            if (line.includes('מצב שימור') || 
+                line.includes('מיון מדעי') ||
+                line.includes('ממלכה:') ||
+                line.includes('Canis lupus') ||
+                line.includes('המונח') && line.includes('מפנה לכאן')) {
+                console.log('Skipping non-post content line:', line.substring(0, 50));
+                continue;
+            }
+            
+            // This looks like real post content
             contentLines.push(line);
+            foundRealContent = true;
             console.log('Adding content line:', line.substring(0, 100));
+        }
+    }
+    
+    // If we didn't find real content, this might be a problematic post
+    if (!foundRealContent && filteredLines.length > 10) {
+        console.log('⚠️ Suspicious content detected - possibly extracted wrong elements');
+        console.log('First few filtered lines:', filteredLines.slice(0, 5));
+        
+        // Try to find content that starts with actual post markers
+        const realContentLines = filteredLines.filter(line => {
+            return line.length > 15 && 
+                   !line.includes('מצב שימור') &&
+                   !line.includes('מיון מדעי') &&
+                   !line.includes('ממלכה:') &&
+                   !line.includes('Canis lupus') &&
+                   !(line.includes('המונח') && line.includes('מפנה לכאן')) &&
+                   (line.includes('מתפנה') || 
+                    line.includes('מחפש') || 
+                    line.includes('דירה') ||
+                    line.includes('מכירה') ||
+                    line.includes('היי') ||
+                    line.includes('שלום') ||
+                    line.includes('****') ||
+                    line.includes('מפרסם'));
+        });
+        
+        if (realContentLines.length > 0) {
+            contentLines = realContentLines;
+            console.log('Found real content using content markers');
         }
     }
     
