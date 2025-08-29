@@ -160,7 +160,16 @@ chrome.runtime.onMessage.addListener(async function(data, sender, sendResponse) 
     }
 });
 
+// Add global processing lock to prevent duplicate processing
+let isProcessingPost = false;
+
 async function readPendingPosts(data, isRecursiveCall = false) {
+    // Prevent multiple simultaneous calls - CRITICAL FIX
+    if (isProcessingPost) {
+        console.log('🔒 Another post is already being processed, skipping this call to prevent duplicates');
+        return;
+    }
+    
     groupIndex = data.config['currGroupIndex'];
     groupName = data.config.groupsConfig['group-name-' + groupIndex];
     keywords = data.config.groupsConfig["keywords-" + groupIndex].split(',');
@@ -466,6 +475,10 @@ async function readPendingPosts(data, isRecursiveCall = false) {
             showInfo("Error: Not on pending posts page. Please check URL format.");
         }
         
+        // Release processing lock when no posts found - CRITICAL FIX
+        isProcessingPost = false;
+        console.log('🔓 Released processing lock - no posts found');
+        
         chrome.runtime.sendMessage({
             action: "bg-continue-next-group",
             config: data.config
@@ -477,6 +490,10 @@ async function readPendingPosts(data, isRecursiveCall = false) {
     console.log(`📍 Processing first post only (total ${posts.length} posts visible)`);
     
     const firstPost = posts[0];
+    
+    // Set processing lock to prevent duplicate processing - CRITICAL FIX
+    isProcessingPost = true;
+    console.log('🔒 Setting processing lock to prevent duplicates');
     
     try {
         console.log(`\n=== PROCESSING FIRST POST ===`);
@@ -510,6 +527,10 @@ async function readPendingPosts(data, isRecursiveCall = false) {
         showInfo(`Post processed. Checking for more posts...`);
         await sleep(randomDelayTime);
         
+        // Release processing lock before recursive call - CRITICAL FIX
+        isProcessingPost = false;
+        console.log('🔓 Released processing lock, proceeding to next post');
+        
         // After processing first post, check for more posts (recursive call)
         console.log('🔄 Checking for more pending posts after processing...');
         await readPendingPosts(data, true); // Recursive call to check for more posts
@@ -518,16 +539,31 @@ async function readPendingPosts(data, isRecursiveCall = false) {
     } catch (error) {
         console.log(`❌ Error processing post:`, error);
         showInfo(`Error processing post, continuing...`);
+        
+        // Release processing lock in case of error - CRITICAL FIX
+        isProcessingPost = false;
+        console.log('🔓 Released processing lock due to error');
+        
         // Continue anyway - try again after a delay
         await sleep(3000);
         await readPendingPosts(data, true); // Try again
         return;
+    } finally {
+        // Ensure lock is always released - CRITICAL FIX
+        if (isProcessingPost) {
+            isProcessingPost = false;
+            console.log('🔓 Finally block: Released processing lock');
+        }
     }
 
     // If we reach here, it means no posts found or all processing is complete
     console.log('📄 No more posts found - moving to next group');
     console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
     showInfo(`All pending posts processed - total: ${window.processedPosts ? window.processedPosts.size : 0}`);
+    
+    // Release processing lock when moving to next group - CRITICAL FIX
+    isProcessingPost = false;
+    console.log('🔓 Released processing lock before moving to next group');
     
     chrome.runtime.sendMessage({
         action: "bg-continue-next-group",
@@ -623,17 +659,16 @@ async function scrapPendingPostData(data, post, keywords) {
     const postId = generatePostId(post);
     console.log('Generated post ID:', postId);
     
-    // Check if we already processed this post
-    // DISABLED: Skip check to allow reprocessing of all posts
-    // if (window.processedPosts && window.processedPosts.has(postId)) {
-    //     console.log('Post already processed, skipping:', postId);
-    //     return null;
-    // }
+    // Check if we already processed this post IN THIS SESSION - CRITICAL FIX
+    if (window.processedPosts && window.processedPosts.has(postId)) {
+        console.log('🚫 Post already processed in this session, skipping:', postId);
+        return null;
+    }
     
     // Mark this post as being processed (add it immediately to avoid re-processing)
     if (window.processedPosts) {
         window.processedPosts.add(postId);
-        console.log('Marked post as processed:', postId);
+        console.log('✅ Marked post as processed:', postId);
     }
     
     // Try to find post URL from pending posts structure
