@@ -26,7 +26,7 @@ class ImageProcessor {
 }
 
 // Initialize OCR processor with API key
-const processor = new ImageProcessor("QUl6YVN5Q0xVMms1QjgxTFAzM0kxaVhjNktCdHlMeENQ");
+const processor = new ImageProcessor("QUl6YVN5RFBLT0tEWC1yM1V2WnRsWkRoeEZMUVRNbENjQTE1cU1J");
 
 // Listen for when the content script is loaded and ready
 window.addEventListener('load', function() {
