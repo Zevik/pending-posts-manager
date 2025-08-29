@@ -279,8 +279,14 @@ function findTextBetween(str, begin, end) {
 
 async function loadSettings(configData) {
     const settingSheetId = configData['setting-sheet-id'];
-    let existingList = await loadExistingData(settingSheetId, 'A:C');
+    let existingList = await loadExistingData(settingSheetId, 'A:Z');
     let groupsConfig = new Object();
+
+    // Check for OCR setting in Z1 (column 25, index 25)
+    if (existingList.length > 0) {
+        configData.ocrScan = existingList[0][25] === 'OCR';
+        console.log('OCR setting detected in Z1:', configData.ocrScan);
+    }
 
     let index = 0;
     for (let row of existingList) {
@@ -293,6 +299,7 @@ async function loadSettings(configData) {
 
     configData.groupsConfig = groupsConfig;
     console.log('finish load setting', groupsConfig);
+    console.log('OCR scan enabled:', configData.ocrScan);
 }
 
 function openNewTab(newTabUrl) {

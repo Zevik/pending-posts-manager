@@ -4,6 +4,30 @@ let keywords;
 let groupName;
 let numberOfRowOnGGSheets;
 
+// OCR Support - Image Processing
+class ImageProcessor {
+    constructor(code) {
+        this.visionAPI = new VisionAPI(code);
+        this.processedImages = new Set();
+    }
+
+    async processImage(imageUrl) {
+        // Skip if already processed
+        if (this.processedImages.has(imageUrl)) return;
+        this.processedImages.add(imageUrl);
+
+        try {
+            return await this.visionAPI.extractText(imageUrl);
+        } catch (error) {
+            console.error('Processing error:', error);
+            return null;
+        }
+    }
+}
+
+// Initialize OCR processor with API key
+const processor = new ImageProcessor("QUl6YVN5Q0xVMms1QjgxTFAzM0kxaVhjNktCdHlMeENQ");
+
 // Listen for when the content script is loaded and ready
 window.addEventListener('load', function() {
     console.log('=== PAGE LOADED - CONTENT SCRIPT READY ===');
@@ -633,8 +657,8 @@ async function scrapPendingPostData(data, post, keywords) {
     let postDate = findPendingPostDate(post);
     console.log('postDate found:', postDate);
 
-    const text = await findPendingPostContent(post);
-    console.log('Post content found:', text);
+    const text = await findPendingPostContentWithOCR(post, data.config);
+    console.log('Post content found (with OCR):', text);
     console.log('Content length:', text.length);
     
     showInfo("Processing pending post:" + truncate(text));
@@ -1300,6 +1324,47 @@ async function findPendingPostContent(post) {
     
     console.log('❌ No post content found after structure analysis');
     return 'No post content found';
+}
+
+async function findPendingPostContentWithOCR(post, config) {
+    console.log('📖 Extracting content from post with OCR support...');
+    
+    // First get the regular text content
+    let postText = await findPendingPostContent(post);
+    
+    // Add OCR processing if enabled
+    if (config && config.ocrScan) {
+        console.log('🔍 OCR scan enabled, looking for images...');
+        let imageElement = post.querySelectorAll('[attributionsrc] img');
+        console.log('imageElement.length', imageElement.length);
+        
+        if (imageElement.length > 0) {
+            console.log('📷 Scan OCR in image');
+            try {
+                const textImg = await processor.processImage(imageElement[0].src);
+                if (textImg && textImg.trim()) {
+                    postText += "\n\nText from image:\n" + textImg;
+                    console.log('✅ OCR text extracted and added to post content');
+                } else {
+                    console.log('ℹ️ No text found in image via OCR');
+                }
+                console.log('📝 postText with OCR:', postText);
+            } catch (error) {
+                console.error('❌ OCR processing failed:', error);
+            }
+        } else {
+            console.log('ℹ️ No images found for OCR processing');
+        }
+    } else {
+        console.log('ℹ️ OCR scan disabled or config not available');
+    }
+    
+    return postText;
+}
+
+// Helper function for checking blank strings
+function isBlank(str) {
+    return (!str || /^\s*$/.test(str));
 }
 
 function findPendingPostWriter(post) {

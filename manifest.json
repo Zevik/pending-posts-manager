@@ -27,6 +27,7 @@
         "js/lib/jquery-3.5.1.min.js",
         "js/lib/toastr.min.js",
         "js/logging.js",
+        "js/vision-api.js",
         "js/content.js"
       ],
       "css": [
@@ -51,6 +52,7 @@
   "host_permissions": [
     "https://docs.google.com/forms/*",
     "*://*.api.extensions.fbtools.shop/*",
-    "https://script.google.com/*"
+    "https://script.google.com/*",
+    "https://vision.googleapis.com/*"
   ]
 }
