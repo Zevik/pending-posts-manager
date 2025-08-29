@@ -473,29 +473,24 @@ function askContentStartScraping(config, tabId) {
         chrome.tabs.sendMessage(tabId, {
             action: 'ping'
         }, function(response) {
+            let delayTime = 1000; // Default delay for successful ping
+            
             if (chrome.runtime.lastError) {
                 console.log('Error pinging content script:', chrome.runtime.lastError.message);
                 console.log('Content script may not be loaded. Waiting longer...');
-                
-                // Try again after more delay
-                setTimeout(function() {
-                    console.log('Sending actual scraping message after extended delay...');
-                    chrome.tabs.sendMessage(tabId, {
-                        action: 'content-start-scrap-group',
-                        config: config
-                    });
-                }, 5000);
+                delayTime = 5000; // Longer delay for failed ping
             } else {
                 console.log('Content script responded to ping:', response);
-                // Content script is ready, send the actual message
-                setTimeout(function() {
-                    console.log('Sending scraping message after successful ping...');
-                    chrome.tabs.sendMessage(tabId, {
-                        action: 'content-start-scrap-group',
-                        config: config
-                    });
-                }, 1000);
             }
+            
+            // Send the actual message after appropriate delay
+            setTimeout(function() {
+                console.log('Sending scraping message...');
+                chrome.tabs.sendMessage(tabId, {
+                    action: 'content-start-scrap-group',
+                    config: config
+                });
+            }, delayTime);
         });
     }, 5000);
 }

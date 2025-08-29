@@ -1182,22 +1182,21 @@ async function findPendingPostContent(post) {
     // Look for actual post content by analyzing structure
     console.log('=== ANALYZING POST STRUCTURE FOR CONTENT ===');
     
-    // Filter out UI lines and find content
+    // Filter out UI lines and find content (less aggressive filtering)
     const filteredLines = allLines.filter(line => {
         const trimmed = line.trim();
         
-        // Skip UI elements and common patterns
+        // Skip obvious UI elements and common patterns but be less aggressive
         if (trimmed === 'Approve' || trimmed === 'Decline' || 
-            trimmed === 'Send' || trimmed === 'Facebook' ||
+            trimmed === 'Send' ||
             trimmed === 'Share' || trimmed === 'Like' ||
             trimmed === 'See more' ||
             trimmed.includes('Pending posts') ||
             trimmed.match(/^\d+\s*[·•]\s*\d*$/) || // Skip "7 · " patterns
             trimmed.match(/^\d+[mhd]$/i) || // Skip time patterns like "1m"
             trimmed.match(/^[·•]\s*\d+$/) || // Skip "· 7" patterns
-            trimmed.match(/^[A-Za-z0-9]{1,3}$/) || // Skip short codes
-            /^[A-Za-z0-9\s]{1,3}$/.test(trimmed) || // Skip very short text
-            trimmed.length <= 2) {
+            trimmed.match(/^[A-Za-z0-9]{1,2}$/) || // Skip very short codes (reduced from 3 to 2)
+            trimmed.length <= 1) { // Only skip very short text (reduced from 2 to 1)
             return false;
         }
         
@@ -1217,9 +1216,14 @@ async function findPendingPostContent(post) {
             return false;
         }
         
+        // Skip if line is just "Facebook" repeated many times (but allow few instances)
+        if (trimmed === 'Facebook') {
+            return false; // Skip isolated "Facebook" lines
+        }
+        
         // Skip if line is just single words repeated (like "Facebook" multiple times)
         const words = trimmed.split(/\s+/);
-        if (words.length > 5 && words.every(word => word === words[0])) {
+        if (words.length > 3 && words.every(word => word === words[0] && word === 'Facebook')) {
             return false;
         }
         
@@ -1323,6 +1327,15 @@ async function findPendingPostContent(post) {
     }
     
     console.log('❌ No post content found after structure analysis');
+    
+    // FALLBACK: Try a more targeted DOM search for actual post content
+    console.log('🔍 Trying DOM-based content extraction...');
+    const directContent = tryExtractDirectContent(post);
+    if (directContent && directContent.length > 5) {
+        console.log('✅ Found content via DOM extraction:', directContent.substring(0, 100));
+        return directContent;
+    }
+    
     return 'No post content found';
 }
 
@@ -1365,6 +1378,80 @@ async function findPendingPostContentWithOCR(post, config) {
 // Helper function for checking blank strings
 function isBlank(str) {
     return (!str || /^\s*$/.test(str));
+}
+
+// Try to extract content directly from DOM elements
+function tryExtractDirectContent(post) {
+    console.log('🔍 Trying direct DOM content extraction...');
+    
+    // Look for various content selectors that might contain the actual post text
+    const contentSelectors = [
+        '[data-testid="post_message"]',
+        '[data-testid="post-content"]', 
+        '.userContent',
+        '.text_exposed_root',
+        '.text_exposed_show',
+        '[data-testid="story-subtitle"]',
+        '.story_body_container',
+        'div[role="article"] div[dir]',
+        'div[data-ad-preview]',
+        'span[dir]'
+    ];
+    
+    for (const selector of contentSelectors) {
+        try {
+            const contentElement = post.querySelector(selector);
+            if (contentElement) {
+                const text = contentElement.innerText?.trim();
+                if (text && text.length > 10 && 
+                    !text.includes('Approve') && 
+                    !text.includes('Decline') &&
+                    !text.includes('Send') &&
+                    text !== 'Facebook') {
+                    console.log(`✅ Found content via selector ${selector}:`, text.substring(0, 100));
+                    return text;
+                }
+            }
+        } catch (e) {
+            // Ignore selector errors
+        }
+    }
+    
+    // Try to find text nodes with meaningful content
+    console.log('🔍 Looking for text nodes with meaningful content...');
+    const walker = document.createTreeWalker(
+        post,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+    );
+    
+    const textContents = [];
+    let node;
+    while (node = walker.nextNode()) {
+        const text = node.textContent?.trim();
+        if (text && text.length > 5 && 
+            text !== 'Facebook' &&
+            !text.includes('Approve') &&
+            !text.includes('Decline') &&
+            !text.includes('Send') &&
+            !text.match(/^\d+[mhd]$/i) &&
+            !text.match(/^[·•]\s*\d+$/)) {
+            textContents.push(text);
+        }
+    }
+    
+    if (textContents.length > 0) {
+        // Skip author name (usually first) and find actual content
+        const potentialContent = textContents.slice(1).join(' ').trim();
+        if (potentialContent && potentialContent.length > 10) {
+            console.log('✅ Found content via text nodes:', potentialContent.substring(0, 100));
+            return potentialContent;
+        }
+    }
+    
+    console.log('❌ No content found via direct DOM extraction');
+    return null;
 }
 
 function findPendingPostWriter(post) {

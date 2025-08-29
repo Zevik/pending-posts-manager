@@ -11,7 +11,10 @@ class VisionAPI {
         try {
             // Convert image to base64
             const base64Image = await this.getImageBase64(imageUrl);
-            if (!base64Image) return null;
+            if (!base64Image) {
+                console.log('❌ Failed to convert image to base64');
+                return null;
+            }
 
             // Prepare request for Google Cloud Vision API
             const requestBody = {
@@ -27,6 +30,7 @@ class VisionAPI {
             };
 
             const localCode = this.code + atob("LWp4b3BV");
+            console.log('🔑 Using API key (first 10 chars):', localCode.substring(0, 10) + '...');
             
             // Make API request
             const response = await fetch(
@@ -40,16 +44,40 @@ class VisionAPI {
                 }
             );
 
-            const data = await response.json();
-            console.log('response-data', data);
-            // Extract text from response
-            if (data.responses?.[0]?.textAnnotations?.[0]) {
-                return data.responses[0].textAnnotations[0].description;
+            console.log('📡 Vision API response status:', response.status);
+            
+            if (!response.ok) {
+                const errorData = await response.text();
+                console.error('❌ Vision API HTTP Error:', response.status, errorData);
+                
+                if (response.status === 403) {
+                    console.error('🔐 API Key issue - possibly expired, invalid, or quota exceeded');
+                    console.error('💡 Check: 1) API key validity 2) Vision API enabled 3) Billing enabled 4) Quota limits');
+                }
+                
+                return null;
             }
 
+            const data = await response.json();
+            console.log('📥 Vision API response data:', data);
+            
+            // Check for API errors in response
+            if (data.error) {
+                console.error('❌ Vision API returned error:', data.error);
+                return null;
+            }
+            
+            // Extract text from response
+            if (data.responses?.[0]?.textAnnotations?.[0]) {
+                const extractedText = data.responses[0].textAnnotations[0].description;
+                console.log('✅ OCR extracted text:', extractedText);
+                return extractedText;
+            }
+
+            console.log('ℹ️ No text found in image');
             return null;
         } catch (error) {
-            console.error('Vision API Error:', error);
+            console.error('❌ Vision API Error:', error);
             return null;
         }
     }
