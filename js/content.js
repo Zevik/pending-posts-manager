@@ -151,16 +151,19 @@ async function readPendingPosts(data, isRecursiveCall = false) {
     // Show that the extension is actively working on this specific group
     showInfo(`Pending Posts Scanner is actively scanning group: ${groupName}`);
     
-    // SIMPLIFIED: Only track processed posts, no scroll counting
+    // Reset all counters and tracking ONLY for the first call, not recursive calls
     if (!isRecursiveCall) {
         window.currentRunPostCount = 0;
         window.processedPosts = new Set(); // Reset processed posts only for new group
-        console.log('🔄 Reset counters for new group scan');
+        window.scrollCount = 0; // Reset scroll counter only for new group
+        
+        console.log('🔄 Reset all counters for new group scan (first call)');
     } else {
-        console.log('📝 Continuing scan (recursive call)');
+        console.log('📝 Continuing scan (recursive call) - keeping existing processed posts');
     }
     
     console.log('Processed posts count:', window.processedPosts.size);
+    console.log('Scroll attempts:', window.scrollCount);
     console.log('Current run post count:', window.currentRunPostCount);
     
     // Wait a bit for page to fully load
@@ -589,9 +592,8 @@ function generatePostId(postElement) {
 
 async function scrapPendingPostData(data, post, keywords) {
     console.log('=== PROCESSING PENDING POST ===');
-    console.log('🎯 NEW LOGIC: Process first post → approve/decline → next post becomes first → repeat');
     console.log('post element:', post);
-    console.log('keywords parameter (ignored):', keywords);
+    console.log('keywords to search:', keywords);
     
     // Generate a unique identifier for this post
     const postId = generatePostId(post);
@@ -622,9 +624,9 @@ async function scrapPendingPostData(data, post, keywords) {
     //     return true;
     // }
     
-    // Allow processing even without real URL - use generated ID as URL
-    if (!postURL || postURL.startsWith('[NO_URL]')) {
-        console.log('No real URL found, using generated post ID as URL for tracking');
+    // Still need to check for missing URL (but not for duplicates)
+    if (!postURL) {
+        console.log('No URL found for post, using generated post ID');
         postURL = postId; // Use the generated post ID as URL for Google Sheets
     }
 
@@ -637,13 +639,21 @@ async function scrapPendingPostData(data, post, keywords) {
     
     showInfo("Processing pending post:" + truncate(text));
     
-    // REMOVED: Keyword checking is no longer needed - process all posts regardless of content
-    console.log('✅ PROCESSING ALL POSTS: No keyword filtering applied');
-    showInfo("Processing pending post:" + truncate(text));
+    let foundKeyword = findKeywordOnText(text, keywords);
+    console.log('Keyword search result:', foundKeyword);
+    
+    // DISABLED: Process all posts regardless of keywords
+    if (foundKeyword == undefined) {
+        console.log('No keyword found - processing post anyway');
+        foundKeyword = 'ALL_POSTS_PROCESSED'; // Default value for posts without keywords
+    }
+    
+    console.log('✅ KEYWORD FOUND:', foundKeyword);
+    showInfo("Processing pending post:" + truncate(text) + "!\n Found key word:" + foundKeyword);
 
     let postData = new Object();
     postData['postDate'] = postDate;
-    postData['wordFound'] = 'ALL_POSTS_PROCESSED'; // No keyword filtering - all posts processed
+    postData['wordFound'] = foundKeyword;
     postData['content'] = text;
     postData['url'] = postURL;
     postData['writer'] = findPendingPostWriter(post);
