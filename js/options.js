@@ -72,10 +72,7 @@ function validateInputData() {
         alert('Interval time (seconds) between round is invalid!');
         return false;
     }
-    if ($('#scrolling-back-pages').val() && $('#scrolling-back-pages').val() < 0) {
-        alert('How many hours scrolling back is invalid!');
-        return false;
-    }
+    // REMOVED: scrolling-back-pages validation - feature removed
     if (!$('#rerun-interval').val() || $('#rerun-interval').val() < 0) {
         alert('Rerun interval time (hours) is invalid!');
         return false;
@@ -108,7 +105,7 @@ async function loadData() {
             $('#rerun-interval').val(configData["rerun-interval"]);
             $('#dailybreak-from').val(configData["dailybreak-from"]);
             $('#dailybreak-to').val(configData["dailybreak-to"]);
-            $('#scrolling-back-pages').val(configData["scrolling-back-pages"]);
+            // REMOVED: scrolling-back-pages loading - feature removed
             
             // Load auto-approve setting
             $('#auto-approve-enabled').prop('checked', configData["auto-approve-enabled"] || false);
@@ -132,7 +129,7 @@ function saveData(isRunning) {
     configData['interval-post'] = $('#interval-post').val();
     configData['interval-groups'] = $('#interval-groups').val();
     configData['interval-round'] = $('#interval-round').val();
-    configData['scrolling-back-pages'] = $('#scrolling-back-pages').val();
+    // REMOVED: scrolling-back-pages config - feature removed
     configData['setting-sheet-url'] = $('#setting-sheet-url').val();
     configData['setting-sheet-id'] = getSheetIdFromSheetUrl($('#setting-sheet-url').val());
     configData['sheet-url'] = $('#sheet-url').val();

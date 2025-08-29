@@ -151,19 +151,16 @@ async function readPendingPosts(data, isRecursiveCall = false) {
     // Show that the extension is actively working on this specific group
     showInfo(`Pending Posts Scanner is actively scanning group: ${groupName}`);
     
-    // Reset all counters and tracking ONLY for the first call, not recursive calls
+    // SIMPLIFIED: Only track processed posts, no scroll counting
     if (!isRecursiveCall) {
         window.currentRunPostCount = 0;
         window.processedPosts = new Set(); // Reset processed posts only for new group
-        window.scrollCount = 0; // Reset scroll counter only for new group
-        
-        console.log('🔄 Reset all counters for new group scan (first call)');
+        console.log('🔄 Reset counters for new group scan');
     } else {
-        console.log('📝 Continuing scan (recursive call) - keeping existing processed posts');
+        console.log('📝 Continuing scan (recursive call)');
     }
     
     console.log('Processed posts count:', window.processedPosts.size);
-    console.log('Scroll attempts:', window.scrollCount);
     console.log('Current run post count:', window.currentRunPostCount);
     
     // Wait a bit for page to fully load
@@ -449,148 +446,62 @@ async function readPendingPosts(data, isRecursiveCall = false) {
         return;
     }
 
-    // Process each post individually with proper timing
-    console.log(`🔄 Starting to process ${posts.length} posts individually...`);
+    // SIMPLIFIED: Process only the first post, then recurse
+    console.log(`📍 Processing first post only (total ${posts.length} posts visible)`);
     
-    for (let i = 0; i < posts.length; i++) {
-        const post = posts[i];
-        const postNumber = i + 1;
+    const firstPost = posts[0];
+    
+    try {
+        console.log(`\n=== PROCESSING FIRST POST ===`);
+        showInfo(`Processing pending post...`);
         
-        try {
-            console.log(`\n=== PROCESSING POST ${postNumber}/${posts.length} ===`);
-            showInfo(`Processing post ${postNumber}/${posts.length}...`);
-            
-            // First, expand "See More" for this specific post and wait
-            console.log(`📖 Step 1: Expanding "See More" for post ${postNumber}...`);
-            const expanded = await expandSeeMore(post);
-            
-            if (expanded) {
-                console.log(`✅ Successfully expanded post ${postNumber}, waiting for content to load...`);
-                await sleep(2000); // Wait for expansion to complete
-            } else {
-                console.log(`ℹ️ No "See More" found for post ${postNumber} or already expanded`);
-                await sleep(500); // Short wait even if no expansion needed
-            }
-            
-            // Wait a bit more before processing content
-            console.log(`⏳ Step 2: Waiting before processing content for post ${postNumber}...`);
-            await sleep(1000);
-            
-            // Now process the post data
-            console.log(`📝 Step 3: Processing post data for post ${postNumber}...`);
-            await scrapPendingPostData(data, post, keywords);
-            
-            // Wait between posts (increased delay)
-            const delayTime = data.config["interval-post"] * 1000;
-            const randomDelayTime = delayTime + delayTime / 100 * getRandomInt(15, 25); // Increased randomness
-            
-            console.log(`⏱️ Step 4: Waiting ${Math.round(randomDelayTime/1000)}s before next post...`);
-            showInfo(`Completed post ${postNumber}/${posts.length}. Waiting before next...`);
-            await sleep(randomDelayTime);
-            
-        } catch (error) {
-            console.log(`❌ Error processing post ${postNumber}:`, error);
-            showInfo(`Error in post ${postNumber}, continuing...`);
-            // Continue to next post even if this one failed
-            await sleep(2000); // Wait before continuing
+        // First, expand "See More" for this specific post and wait
+        console.log(`📖 Step 1: Expanding "See More"...`);
+        const expanded = await expandSeeMore(firstPost);
+        
+        if (expanded) {
+            console.log(`✅ Successfully expanded post, waiting for content to load...`);
+            await sleep(2000); // Wait for expansion to complete
+        } else {
+            console.log(`ℹ️ No "See More" found or already expanded`);
+            await sleep(500); // Short wait even if no expansion needed
         }
-    }
-
-    console.log(`=== FINISHED PROCESSING ${posts.length} PENDING POSTS ===`);
-
-    // Limit the number of scroll attempts to prevent infinite loops
-    if (window.scrollCount >= 5) {
-        console.log('Maximum scroll attempts reached, stopping scan');
-        console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
-        showInfo(`Scan completed - reached max scrolls. Processed ${window.processedPosts ? window.processedPosts.size : 0} posts`);
         
-        // Reset scroll counter for next group
-        window.scrollCount = 0;
+        // Wait a bit more before processing content
+        console.log(`⏳ Step 2: Waiting before processing content...`);
+        await sleep(1000);
         
-        console.log('Finished processing all pending posts in this group');
-        chrome.runtime.sendMessage({
-            action: "bg-continue-next-group",
-            config: data.config
-        });
+        // Now process the post data
+        console.log(`📝 Step 3: Processing post data...`);
+        await scrapPendingPostData(data, firstPost, keywords);
+        
+        // Wait after processing
+        const delayTime = data.config["interval-post"] * 1000;
+        const randomDelayTime = delayTime + delayTime / 100 * getRandomInt(15, 25);
+        
+        console.log(`⏱️ Step 4: Waiting ${Math.round(randomDelayTime/1000)}s before checking for next post...`);
+        showInfo(`Post processed. Checking for more posts...`);
+        await sleep(randomDelayTime);
+        
+        // After processing first post, check for more posts (recursive call)
+        console.log('🔄 Checking for more pending posts after processing...');
+        await readPendingPosts(data, true); // Recursive call to check for more posts
+        return;
+        
+    } catch (error) {
+        console.log(`❌ Error processing post:`, error);
+        showInfo(`Error processing post, continuing...`);
+        // Continue anyway - try again after a delay
+        await sleep(3000);
+        await readPendingPosts(data, true); // Try again
         return;
     }
 
-    // Try scrolling down to load more content
-    console.log('⏳ Scrolling down to load more content...');
-    showInfo('Checking for more content...');
-    window.scrollCount++;
-    const scrollHeight = document.body.scrollHeight;
-    window.scrollTo(0, scrollHeight);
-    
-    // Wait longer for potential lazy loading
-    await sleep(4000); // Increased from 2000
-    
-    // Check if new content was loaded by comparing scroll height
-    const newScrollHeight = document.body.scrollHeight;
-    if (newScrollHeight > scrollHeight) {
-        console.log('New content loaded after scrolling, scanning again...');
-        showInfo('New content found, scanning...');
-        await sleep(2000); // Additional wait for new content to stabilize
-        await readPendingPosts(data, true); // Recursive call
-        return;
-    }
-
-    // For pending posts, we typically don't have pagination like regular feed
-    // But let's check if there's a "See More" or "Load More" button
-    
-    console.log('Looking for load more buttons...');
-    const loadMoreButtons = document.querySelectorAll('[role="button"]');
-    let foundLoadMore = false;
-    
-    for (let button of loadMoreButtons) {
-        const buttonText = button.innerText.toLowerCase();
-        if (buttonText.includes('see more') || buttonText.includes('load more') || buttonText.includes('show more')) {
-            console.log('Found load more button:', button.innerText);
-            foundLoadMore = true;
-            
-            // Try to click it
-            try {
-                console.log('Clicking load more button...');
-                button.click();
-                showInfo('Loading more pending posts...');
-                
-                // Wait longer for new posts to load
-                await sleep(5000); // Increased from 3000
-                
-                // Recursively call this function to process new posts
-                await readPendingPosts(data, true); // Recursive call
-                return;
-            } catch (error) {
-                console.log('Error clicking load more button:', error);
-            }
-        }
-    }
-    
-    if (!foundLoadMore) {
-        console.log('No load more buttons found');
-        
-        // Try final scroll to see if there's more content
-        console.log('Trying final scroll to check for more content...');
-        window.scrollTo(0, document.body.scrollHeight);
-        await sleep(3000); // Increased wait time
-        
-        const finalScrollHeight = document.body.scrollHeight;
-        if (finalScrollHeight > newScrollHeight) {
-            console.log('Additional content found after final scroll, scanning again...');
-            showInfo('Additional content found, scanning...');
-            await sleep(2000); // Wait for content to stabilize
-            await readPendingPosts(data, true); // Recursive call
-            return;
-        }
-        
-        console.log('No more content available - scanning complete');
-        console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
-        showInfo(`Pending posts scan completed - processed ${window.processedPosts ? window.processedPosts.size : 0} posts`);
-    }
-    
-    console.log('Finished processing all pending posts in this group');
+    // If we reach here, it means no posts found or all processing is complete
+    console.log('📄 No more posts found - moving to next group');
     console.log('Total processed posts in this session:', window.processedPosts ? window.processedPosts.size : 0);
-    showInfo(`Finished processing pending posts - total: ${window.processedPosts ? window.processedPosts.size : 0}, go to next group!`);
+    showInfo(`All pending posts processed - total: ${window.processedPosts ? window.processedPosts.size : 0}`);
+    
     chrome.runtime.sendMessage({
         action: "bg-continue-next-group",
         config: data.config
@@ -678,18 +589,20 @@ function generatePostId(postElement) {
 
 async function scrapPendingPostData(data, post, keywords) {
     console.log('=== PROCESSING PENDING POST ===');
+    console.log('🎯 NEW LOGIC: Process first post → approve/decline → next post becomes first → repeat');
     console.log('post element:', post);
-    console.log('keywords to search:', keywords);
+    console.log('keywords parameter (ignored):', keywords);
     
     // Generate a unique identifier for this post
     const postId = generatePostId(post);
     console.log('Generated post ID:', postId);
     
     // Check if we already processed this post
-    if (window.processedPosts && window.processedPosts.has(postId)) {
-        console.log('Post already processed, skipping:', postId);
-        return null;
-    }
+    // DISABLED: Skip check to allow reprocessing of all posts
+    // if (window.processedPosts && window.processedPosts.has(postId)) {
+    //     console.log('Post already processed, skipping:', postId);
+    //     return null;
+    // }
     
     // Mark this post as being processed (add it immediately to avoid re-processing)
     if (window.processedPosts) {
@@ -702,10 +615,17 @@ async function scrapPendingPostData(data, post, keywords) {
     console.log('postURL found:', postURL);
     
     // If the post URL was already scraped, we don't need to take it.
-    if (!postURL || data.config.existingPostURL.includes(postURL)) {
-        console.log('Post already processed or no URL found:', postURL);
-        showInfo("Already processed the url:" + postURL);
-        return true;
+    // DISABLED: Skip URL check to allow reprocessing of all posts
+    // if (!postURL || data.config.existingPostURL.includes(postURL)) {
+    //     console.log('Post already processed or no URL found:', postURL);
+    //     showInfo("Already processed the url:" + postURL);
+    //     return true;
+    // }
+    
+    // Allow processing even without real URL - use generated ID as URL
+    if (!postURL || postURL.startsWith('[NO_URL]')) {
+        console.log('No real URL found, using generated post ID as URL for tracking');
+        postURL = postId; // Use the generated post ID as URL for Google Sheets
     }
 
     let postDate = findPendingPostDate(post);
@@ -717,20 +637,13 @@ async function scrapPendingPostData(data, post, keywords) {
     
     showInfo("Processing pending post:" + truncate(text));
     
-    let foundKeyword = findKeywordOnText(text, keywords);
-    console.log('Keyword search result:', foundKeyword);
-    
-    if (foundKeyword == undefined) {
-        console.log('No keyword found in this post, skipping');
-        return true;
-    }
-    
-    console.log('✅ KEYWORD FOUND:', foundKeyword);
-    showInfo("Processing pending post:" + truncate(text) + "!\n Found key word:" + foundKeyword);
+    // REMOVED: Keyword checking is no longer needed - process all posts regardless of content
+    console.log('✅ PROCESSING ALL POSTS: No keyword filtering applied');
+    showInfo("Processing pending post:" + truncate(text));
 
     let postData = new Object();
     postData['postDate'] = postDate;
-    postData['wordFound'] = foundKeyword;
+    postData['wordFound'] = 'ALL_POSTS_PROCESSED'; // No keyword filtering - all posts processed
     postData['content'] = text;
     postData['url'] = postURL;
     postData['writer'] = findPendingPostWriter(post);
